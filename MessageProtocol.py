@@ -6,14 +6,16 @@ class BaseMessage():
 	AppendEntries = 2
 	RequestVotes = 3
 	RequestVoteResponse = 4
+	ConnectionRequest = 5
+	ConnectionResponse = 6
 
 	def __init__(self, type_, term_, sender_, receiver_, data_):
 		self._timestamp = int(time.time())
 		self._type = type_
-		self._data = term_
+		self._term = term_
 		self._sender = sender_
 		self._receiver = receiver_
-		self._term = data_
+		self._data = data_
 
 	@property
 	def type(self):
