@@ -9,49 +9,42 @@ import copy
 from Interface import Listener, Talker
 from MessageProtocol import BaseMessage, RequestVotesMessage, AppendEntriesMessage, parse_json_message
 
-total_nodes = 10
+total_nodes = 20
 start_port = 5557
 
 class Sentinel(threading.Thread):
-    def __init__(self, config_file, name, role):
+    def __init__(self, config_file, name, role, verbose=False):
         threading.Thread.__init__(self) 
+        self._termate_lock = threading.Lock()
+        self._terminate = False
+        self.verbose = verbose
 
         # Thread should die when the calling thread does
         self.daemon = True
 
         # Load the list of known nodes
         self.data = self._load_config(config_file, name)
-        self.leader_address = self.data['leader']['port']                 # Special priority channel for adding new nodes
+        self.leader_address = self.data['leader']['port']         # Special priority channel for adding new nodes
 
         # Timing conditions
-        scale = 10.0
-        self.random_range = [0.1, 1.0]
-        self.random_backoff = random.uniform(self.random_range[0], self.random_range[1])            # Failed vote backoff
-        self.heartbeat_frequency = 1.0 / scale                    # How often to send heartbeat
-        self.heartbeat_timeout = (self.heartbeat_frequency * 2)   # How often to check for heartbeat
-        self.node_stale_after = self.heartbeat_timeout
+        self.election_timeout = random.uniform(0.4, 0.5)          # Failed vote backoff, used for pretty much all timing related things
+        self.heartbeat_frequency = 0.2                            # How often to send heartbeat (should be less than the election timeout)
 
         # State variables
-        self.current_role = role                                  # Your role in the system (follower, candidate, leader)
+        self.current_role = role                                  # Your role in the system (follower, candidate, leader, pending)
         self.current_term = 1                                     # Election term
         self.voted_for = None                                     # Who have you voted in this term 
         self.current_num_nodes = len(self.data) - 1               # Number of nodes in the system
         self.current_leader = None                                # Who is the system leader
         self.current_nodes = {}                                   # Set containing the last contact with each node
+        self.node_name = name                                     # Your name, used to determine your address
 
-        # Takes care of shutting the system down safely
-        self._termate_lock = threading.Lock()
-        self._terminate = False
-
-        # Your information
-        self.node_name = name
-
-        # If you're not in the address book, then you'll be talking on the leader address
+        # If you're not in the address book, then you'll be talking on the leader address until you're added to the system
         if self.node_name not in self.data:
             self.address = self.leader_address
             self.current_role = 'pending'
         else:
-            self.address = self.data[self.node_name]['port']                # Your addressing information
+            self.address = self.data[self.node_name]['port'] 
         
         # This is what the Listener uses to identify itself
         identity = {
@@ -63,16 +56,13 @@ class Sentinel(threading.Thread):
 
         # If you're in the address book, you can start talking right away, else wait
         if self.node_name in self.data:
-            # The talker is a publisher that only takes its own port as input
             self.talker = Talker(port=self.address)
             self.talker.start()
 
     def stop(self):
         self.talker.stop()
         self.listener.stop()
-        self._termate_lock.acquire()
         self._terminate = True
-        self._termate_lock.release()
 
     def run(self):
         # Wait for the Interface to be ready
@@ -90,20 +80,31 @@ class Sentinel(threading.Thread):
                 self._initiate_connection()
 
     def _initiate_connection(self):
+        '''
+            _initiate_connection: Nodes will start here if they do not exist in the address book. This
+                means that they need to be added to the system. To add themselves to the system they 
+                must send a connection request over a special leader address, which allows them to send 
+                messages directly to the leader node. When a leader emerges, the leader will observe the
+                request and respond to the node with a new address. This response will be heard by other
+                nodes, who will also add this node to the system. 
+        '''
+
         # The talker is a publisher that only takes its own port as input
         self.talker = Talker(port=self.address) # Your address is currenty the leader address
         self.talker.start()
 
         # Address may already be in use, wait until it's not
         self.talker.wait_until_ready()
-        #print(self.address + ' got use of leader address')
 
         # If you're connecting to an existing network, send a request to the leader address
         self._send_connection_request()
 
         # Keep track of when you've sent the last request
         most_recent_request = time.time()
-        resend_window = 1.0
+        resend_window = 5.0
+
+        if(self.verbose):
+            print(self.address + ': requesting access to the network')
 
         # Loop until a state change
         while not self._terminate:
@@ -137,7 +138,8 @@ class Sentinel(threading.Thread):
             
             # If you haven't sent a request in a while, send another
             if ((time.time() - most_recent_request) > resend_window):
-                print(self.address + ' resending connection request')
+                if(self.verbose):
+                    print(self.address + ': re-requesting access to the network')
                 self._send_connection_request()
                 most_recent_request = time.time()
 
@@ -145,14 +147,18 @@ class Sentinel(threading.Thread):
         return
 
     def _follower(self):
-        ''' Responsibilites the node has as a follower ''' 
+        ''' 
+            _follower: Nodes will start here if they have been newly added to the network. The responsibilities
+                of the follower nodes are as follows:
+                    - Observe and respond to heartbeat sent by the leader node.
+                    - If no heartbeat is heard, promote self to candidate. 
+                    - If RequestVotes is heard, vote for that node for the current term. 
+        ''' 
 
-        # Keep track of when you've seen the last heartbeat
+        # This will be when you've seen the most recent heartbeat
         most_recent_heartbeat = time.time()
 
-        # Loop until a state change
         while not self._terminate:
-            # Watch for messages
             incoming_message = self._get_message()
             if (incoming_message is not None):
 
@@ -160,11 +166,10 @@ class Sentinel(threading.Thread):
                 if (incoming_message.type == BaseMessage.Heartbeat):
                     self._send_acknowledge(incoming_message.sender, BaseMessage.Heartbeat)
                     most_recent_heartbeat = time.time()
-                    self.current_leader = incoming_message.sender
-                    #print(self.address + ' heard heartbeat')
 
-                    # Update the number of nodes in the system
+                    # Update the number of nodes, and the current leader
                     self.current_num_nodes = incoming_message.data['current_num_nodes']
+                    self.current_leader = incoming_message.sender
                     
                 # Incoming message is a new election candidate
                 elif (incoming_message.type == BaseMessage.RequestVotes):
@@ -177,15 +182,15 @@ class Sentinel(threading.Thread):
                     if (self.voted_for is None):
                         self._send_vote(incoming_message.sender)
 
-                    # If there's currently a candidate running, don't promote yourself 
+                    # If there's currently a candidate running, don't promote yourself, ie count this as a heartbeat 
                     most_recent_heartbeat = time.time()
 
-                # If the message is a new connection response, someone has been added to the network, update your node counter
+                # Incoming message is a new connection response, someone has been added to the network, update your node counter
                 elif (incoming_message.type == BaseMessage.ConnectionResponse):
                     self.current_num_nodes = self.current_num_nodes + 1
 
             # If you haven't heard a heartbeat in a while, promote yourself to a candidate
-            if ((time.time() - most_recent_heartbeat) > (self.heartbeat_timeout + random.uniform(self.random_range[0], self.random_range[1]))):
+            if ((time.time() - most_recent_heartbeat) > (self.election_timeout)):
                 self.current_role = 'candidate'
                 return
 
@@ -193,14 +198,32 @@ class Sentinel(threading.Thread):
         return
 
     def _candidate(self):
-        ''' Responsibilites the node has as a candidate '''  
+        ''' 
+            _candidate: Nodes will start here if they have not heard the leader for a period of time. The 
+                responsibilities of the candidate nodes are as follows:
+                    - Increment term and vote for self.
+                    - Send RequestVotes to all other nodes. 
+                    - Wait for responses. There are several possible outcomes:
+                        + If you recieve more than half of the votes in the system, promote yourself. 
+                        + If you see someone else starting an election for a term higher than your own, 
+                            vote for them, update yourself, and then demote yourself. 
+                        + If you see a heartbeat for a term higher than or equal to your own, update 
+                            yourself, and then demote yourself. 
+                        + If you see a connection response, add this new person to the network. This only
+                            happens if you're out of sync but it must be accounted for. 
+                        + If you have not won after the election timeout, either you lost, or nodes have
+                            been removed from the network. In either case, update your current number of 
+                            nodes and then demote yourself. 
+        ''' 
+
+        if(self.verbose):
+            print(self.address + ': became candidate')
 
         # If you're a candidate, then this is a new term
         self._increment_term()
 
         # Request for people to vote for you
         self._send_request_vote()
-        print(self.address + ' im running')
 
         # Vote for yorself
         self._send_vote(self.address)
@@ -209,13 +232,10 @@ class Sentinel(threading.Thread):
         votes_for_me = 0
         total_votes = 0
 
-        # Keep track of when you've seen the last heartbeat
+        # Keep track of how long the election has been going
         time_election_going = time.time()
-        election_length = 1.0
 
-        # Loop until a state change
         while not self._terminate:
-            # Watch for messages
             incoming_message = self._get_message()
             if (incoming_message is not None):
                 
@@ -226,20 +246,10 @@ class Sentinel(threading.Thread):
                     if (incoming_message.data['vote'] == self.address):
                         votes_for_me = votes_for_me + 1
                         
-                    # Increment the total votes
-                    total_votes = total_votes + 1 
-                    #print(self.address + ' total votes ' + str(votes_for_me))
-                    #print(self.address + ' votes for me ' + str(votes_for_me))
-
                     # If you have a majority, promote yourself
-                    if ((votes_for_me > int((self.current_num_nodes + 1) / 2)) or (self.current_num_nodes == 1)):
+                    total_votes = total_votes + 1 
+                    if ((votes_for_me > int((self.current_num_nodes / 2) + 1)) or (self.current_num_nodes == 1)):
                         self.current_role = 'leader'
-                        return
-
-                    # If dont have a majority, demote yourself
-                    elif (total_votes == self.current_num_nodes):
-                        time.sleep(random.uniform(self.random_range[0], self.random_range[1]))
-                        self.current_role = 'follower'
                         return
                 
                 # If there's an election for someone else on a higher term, update your term, vote for them, and demote yourself
@@ -271,10 +281,10 @@ class Sentinel(threading.Thread):
                     self.current_num_nodes = self.current_num_nodes + 1
             
             # If this election has been going for a while we're probably deadlocked, update num nodes, backoff and demote
-            if ((time.time() - time_election_going) > election_length):
-                print(self.address + ' I think were deadlocked, backing off ')
+            if ((time.time() - time_election_going) > self.election_timeout):
+                if(self.verbose):
+                    print(self.address + ': election timed out')
                 self.current_num_nodes = total_votes
-                time.sleep(random.uniform(self.random_range[0], self.random_range[1]))
                 self.current_role = 'follower'
                 return
         
@@ -282,11 +292,29 @@ class Sentinel(threading.Thread):
         return
 
     def _leader(self):
-        ''' Responsibilites the node has as a leader ''' 
+        ''' 
+            _leader: Nodes will start here if they have won an election and promoted themselves. The 
+                responsibilities of the leader nodes are as follows:
+                    - Send a periodic heartbeat. 
+                    - Keep track of who is in the system. Your counter will be broadcast to the other nodes
+                        and will ensure that future elections proceed smoothly. If you haven't heard from 
+                        a node for a while, then mark it as stale and update your counter. 
+                    - If there's a vote going on with a term term higher than your own, vote for them, 
+                        update yourself, and then demote yourself. If there's a vote going on with a 
+                        term equal to yours, do nothing, they will see your heartbeat and back off.  
+                    - If you see an ack then there are two possible outcomes:
+                        + If the ack is a heartbeat ack, update the list of active nodes. 
+                        + If the ack is a conection request ack, then a new person has been added to the 
+                            network. 
+                    - Check the leader messages, which are used only for incoming connection requests. If
+                        you see a new connection request, allow the node into the network. 
+        ''' 
         
+        if(self.verbose):
+            print(self.address + ': became leader')
+
         # First things first, send a heartbeat
         self._send_heartbeat()
-        print(self.address + ' i got elected')
 
         # You're the current leader
         self.current_leader = self.address
@@ -294,47 +322,37 @@ class Sentinel(threading.Thread):
         # Keep track of when you've sent the last heartbeat
         most_recent_heartbeat = time.time()
 
-        # Loop until a state change
         while not self._terminate:
-            # Send a heartbeat
+            # First, send a heartbeat
             if ((time.time() - most_recent_heartbeat) > self.heartbeat_frequency):
                 self._send_heartbeat()
                 most_recent_heartbeat = time.time()
 
-                # And then check up on active nodes
-                #print(self.address + ' current num nodes bef ' + str(self.current_num_nodes))
+                # And then check to see when you've last recieved contact from other nodes, update the number of current nodes accordingly
                 num_nodes_not_stale = 1
                 for n in self.current_nodes:
                     if (self.current_nodes[n] is not None):
-                        if ((time.time() - self.current_nodes[n]) > self.node_stale_after):
+                        if ((time.time() - self.current_nodes[n]) > self.election_timeout):
                             self.current_nodes[n] = None
                         else:
                             num_nodes_not_stale = num_nodes_not_stale + 1
+                self.current_num_nodes = num_nodes_not_stale  
 
-                self.current_num_nodes = num_nodes_not_stale                
-
-                #for n in self.current_nodes:
-                #    print(self.current_nodes[n])
+                if(self.verbose):
+                    print(self.address + ': sending heartbeat to ' + str(self.current_num_nodes) + ' active nodes')              
 
                 #print(self.address + ' sending heartbeat on term ' + str(self.current_term))
-                print(self.address + ' current num nodes ' + str(self.current_num_nodes))
-
-            # Watch for leader messages (network updates)
-            incoming_message = self._get_leader_message()
-            if (incoming_message is not None):
-                # If the message is a new connection request
-                if (incoming_message.type == BaseMessage.ConnectionRequest):
-
-                    # Send the node its new port number, which is its address, which was updated by the Interface
-                    self._send_connection_response(incoming_message)
+                #print(self.address + ' current num nodes ' + str(self.current_num_nodes))
 
             # Watch for messages
             incoming_message = self._get_message()
             if (incoming_message is not None):
 
-                # If there's a vote going on with a term above yours, update your term, vote for them, and demote yourself
+                # Incoming message is a request votes, if there's a vote going on with a term above yours, update your term, vote for them, and demote yourself
                 if (incoming_message.type == BaseMessage.RequestVotes):
                     if (incoming_message.term > self.current_term):
+                        if(self.verbose):
+                            print(self.address + ': saw higher term, demoting')
 
                         # It's a new term, catch up
                         self._increment_term(incoming_message.term)
@@ -342,33 +360,47 @@ class Sentinel(threading.Thread):
                         # You're old news, vote for this guy
                         self._send_vote(incoming_message.sender)
 
-                        # Reset your contact list 
+                        # Reset your node list
                         self.current_nodes = {}
 
                         # Demote yourself
                         self.current_role = 'follower'
-                        print(self.address + ' i got demoted')
                         return
                 
-                # If message is an ack, this is a heartbeat ack, or this is a connection accept ack
+                # Incoming message is a heartbeat that is not yours, demote yourself. 
+                elif ((incoming_message.type == BaseMessage.Heartbeat) and (incoming_message._sender != self.address) and (incoming_message._term >= self.term)):
+                    if(self.verbose):
+                        print(self.address + ': saw another leader, demoting')
+
+                    # Reset your node list
+                    self.current_nodes = {}
+
+                    # Demote yourself
+                    self.current_role = 'follower'
+                    return
+
+
+                # Incoming message is an ack, either a heartbeat ack, or a connection accept ack
                 elif (incoming_message.type == BaseMessage.Acknowledge):
 
                     # If the message is an ack to your heartbeat, add this node to the list of active nodes
                     if ((incoming_message.receiver == self.address) and (incoming_message.data['ack_reason'] == BaseMessage.Heartbeat)):
                         self.current_nodes[incoming_message.sender] = time.time()
 
-                        #print(self.address + ' recieved heartbeat ack from ' + incoming_message.sender)
-                        #for n in self.current_nodes:
-                        #    print(self.address + ' recieved heartbeat ack from ' + n)
-
                     # If the message is an ack to a connection accept
                     elif ((incoming_message.data['ack_reason'] == BaseMessage.ConnectionResponse)):
                         # Increment the number of active nodes
                         self.current_num_nodes = self.current_num_nodes + 1
-                        print(self.address + ' okaying addition of node ' + incoming_message.sender)
-                        print(self.address + ' current num nodes ' + str(self.current_num_nodes))
+                        if(self.verbose):
+                            print(self.address + ': okaying addition of node: ' + incoming_message.sender)
 
-        # If you reach here, then the thread is exiting
+            # Watch for leader messages, ie network updates
+            incoming_message = self._get_leader_message()
+            if (incoming_message is not None):
+                # Incoming message is a new connection request, send a response
+                if (incoming_message.type == BaseMessage.ConnectionRequest):
+                    self._send_connection_response(incoming_message)
+
         return
                     
     def _send_message(self, message):
@@ -496,15 +528,14 @@ def test1():
     for n in s:
         n.start()
 
-    time.sleep(10)
+    time.sleep(5)
 
-    num_to_kill = int(total_nodes / 2)
+    num_to_kill = int(total_nodes / 2) - 1
     for n in s:
         num_to_kill = num_to_kill - 1
         n.stop()
         if num_to_kill == 0:
             break
-    
     time.sleep(10)
 
     for n in s:
@@ -526,10 +557,10 @@ def test2():
     with open('address_book2.json', 'w') as outfile:
         json.dump(addresss_book, outfile)
 
-    node1 = Sentinel('address_book2.json', 'node1', 'follower')
-    node2 = Sentinel('address_book2.json', 'node2', 'follower')
-    node3 = Sentinel('address_book2.json', 'node3', 'follower')
-    node4 = Sentinel('address_book2.json', 'node4', 'follower')
+    node1 = Sentinel('address_book2.json', 'node1', 'follower', verbose=True)
+    node2 = Sentinel('address_book2.json', 'node2', 'follower', verbose=True)
+    node3 = Sentinel('address_book2.json', 'node3', 'follower', verbose=True)
+    node4 = Sentinel('address_book2.json', 'node4', 'follower', verbose=True)
 
     node1.start()
     node2.start()
@@ -547,4 +578,4 @@ def test2():
     node4.stop()
 
 if __name__ == '__main__':
-    test1()
+    test2()
