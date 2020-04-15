@@ -34,7 +34,7 @@ class Sentinel(threading.Thread):
         # State variables
         self.current_role = role                                  # Your role in the system (follower, candidate, leader)
         self.current_term = 1                                     # Election term
-        self.current_vote_state = False                           # Have you voted in this term 
+        self.voted_for = None                                     # Who have you voted in this term 
         self.current_num_nodes = len(self.data) - 1               # Number of nodes in the system
         self.current_leader = None                                # Who is the system leader
         self.current_nodes = {}                                   # Set containing the last contact with each node
@@ -174,7 +174,7 @@ class Sentinel(threading.Thread):
                         self._increment_term(incoming_message.term)
                         
                     # If you haven't already voted, you can now
-                    if (not self.current_vote_state):
+                    if (self.voted_for is None):
                         self._send_vote(incoming_message.sender)
 
                     # If there's currently a candidate running, don't promote yourself 
@@ -380,15 +380,23 @@ class Sentinel(threading.Thread):
         return parse_json_message(self.listener.get_message())
 
     def _get_leader_message(self):
-        # A wrapper to recieve a message. If there are no pending messages, returns none
+        # A wrapper to recieve a leader message. If there are no pending messages, returns none
         return parse_json_message(self.listener.get_leader_message())
     
     def _increment_term(self, term=None):
-        self.current_vote_state = False
+        self.voted_for = None
         if (term is None):
             self.current_term = self.current_term + 1
         else:
             self.current_term = term
+
+    def _send_request_vote(self):
+        request_votes = RequestVotesMessage(
+            type_ =   BaseMessage.RequestVotes, 
+            term_ =   self.current_term, 
+            sender_ = self.address
+        )
+        self._send_message(request_votes)
 
     def _send_heartbeat(self):
         heartbeat_message = AppendEntriesMessage(
@@ -413,15 +421,7 @@ class Sentinel(threading.Thread):
             }
         )
         self._send_message(vote_message)
-        self.current_vote_state = True
-
-    def _send_request_vote(self):
-        request_votes = RequestVotesMessage(
-            type_ =   BaseMessage.RequestVotes, 
-            term_ =   self.current_term, 
-            sender_ = self.address
-        )
-        self._send_message(request_votes)
+        self.voted_for = candidate
     
     def _send_acknowledge(self, receiver, reason):
         acknowledge_message = AppendEntriesMessage(
