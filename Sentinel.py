@@ -457,6 +457,8 @@ class Sentinel(threading.Thread):
             sender_ =   self.address,
             receiver_ = candidate,
             data_ =     {
+                'current_num_nodes': self.current_num_nodes,
+                'current_leader': self.current_leader,
                 'vote': candidate
             }
         )
@@ -470,6 +472,8 @@ class Sentinel(threading.Thread):
             sender_ =   self.address,
             receiver_ = receiver,
             data_ =     {
+                'current_num_nodes': self.current_num_nodes,
+                'current_leader': self.current_leader,
                 'ack_reason': reason
             }
         )
@@ -479,9 +483,11 @@ class Sentinel(threading.Thread):
         connection_message = AppendEntriesMessage(
             type_ =     BaseMessage.ConnectionRequest,
             term_ =     self.current_term,
-            sender_ =   self.address,     # Will be equal to leader channel
+            sender_ =   self.address,        # Will be equal to leader channel
             receiver_ = self.leader_address,
             data_ =     {
+                'current_num_nodes': self.current_num_nodes,
+                'current_leader': self.current_leader,
                 'node_name': self.node_name,
                 'new_address': None
             }
@@ -495,10 +501,10 @@ class Sentinel(threading.Thread):
             sender_ =   self.address,
             receiver_ = receiver.sender,     # Will still be equal to leader channel
             data_ =     {
-                'node_name': receiver.data['node_name'],     # Make sure it gets to the right person
-                'new_address': receiver.data['new_address'], # Auto populated by the Interface
                 'current_num_nodes': self.current_num_nodes,
                 'current_leader': self.current_leader,
+                'node_name': receiver.data['node_name'],     # Make sure it gets to the right person
+                'new_address': receiver.data['new_address'], # Auto populated by the Interface
                 'leader_name': self.node_name
             }
         )
