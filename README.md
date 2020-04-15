@@ -11,7 +11,11 @@ This repo is under development, and will probably evolve into the standard RAFT 
 
 ### Installation and Testing
 Clone the repo, create a new python environment and then run:
-```pip install -r requirements.txt```
+```bash
+pip install -r requirements.txt
+```
 
 To test the system run: 
-```python Sentinel.py```
+```python 
+python Sentinel.py
+```
