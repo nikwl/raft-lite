@@ -1,1 +1,1 @@
-{"node1": {"ip": "localhost", "port": "5556"}, "node3": {"ip": "localhost", "port": "5558"}, "node2": {"ip": "localhost", "port": "5557"}}
+{"node1": {"ip": "localhost", "port": "5554"}, "leader": {"ip": "localhost", "port": "5553"}}

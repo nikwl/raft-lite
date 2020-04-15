@@ -9,6 +9,8 @@ import copy
 from Interface import Listener, Talker
 from MessageProtocol import BaseMessage, RequestVotesMessage, AppendEntriesMessage, parse_json_message
 
+# Adjust these to test
+address_book_fname = 'address_book.json'
 total_nodes = 20
 start_port = 5557
 
@@ -245,10 +247,13 @@ class Sentinel(threading.Thread):
                     # Tally any votes for you
                     if (incoming_message.data['vote'] == self.address):
                         votes_for_me = votes_for_me + 1
+
+                    print(self.address + ' votes for me ' + str(votes_for_me))
+                    print(self.address + ' num nodes ' + str(self.current_num_nodes))
                         
                     # If you have a majority, promote yourself
                     total_votes = total_votes + 1 
-                    if ((votes_for_me > int((self.current_num_nodes / 2) + 1)) or (self.current_num_nodes == 1)):
+                    if ((votes_for_me > int(self.current_num_nodes / 2)) or (self.current_num_nodes == 1)):
                         self.current_role = 'leader'
                         return
                 
@@ -284,6 +289,9 @@ class Sentinel(threading.Thread):
             if ((time.time() - time_election_going) > self.election_timeout):
                 if(self.verbose):
                     print(self.address + ': election timed out')
+
+                # This little bit here lets elections progress without getting what might be a majority. But it also lets a leader be elected
+                # after the crashing of more than half of the nodes. 
                 self.current_num_nodes = total_votes
                 self.current_role = 'follower'
                 return
@@ -501,7 +509,12 @@ class Sentinel(threading.Thread):
             data = json.load(infile)
         return data
 
-def test1():
+def test_failures():
+    '''
+        test_failures: Creates a bunch of nodes and then crashes half of them. 
+            A leader should emerge after the crash. 
+    '''
+    # Create the address book with x number of nodes
     d = {'leader':{'ip': 'localhost',
             'port': '5553'}}
 
@@ -514,34 +527,46 @@ def test1():
         }
         node_num = node_num + 1
         
-    with open('address_book2.json', 'w') as outfile:
+    with open(address_book_fname, 'w') as outfile:
         json.dump(d, outfile)
 
+    # Create and start the sentinals
     s = []
-
     node_num = 1
     for p in range(start_port, start_port+total_nodes):
         name = 'node' + str(node_num)
-        s.append(Sentinel('address_book2.json', name, 'follower'))
+        s.append(Sentinel(address_book_fname, name, 'follower'))
         node_num = node_num + 1
-
     for n in s:
         n.start()
 
-    time.sleep(5)
+    # Wait for a bit
+    time.sleep(10)
 
+    # Kill half of them
     num_to_kill = int(total_nodes / 2) - 1
     for n in s:
         num_to_kill = num_to_kill - 1
         n.stop()
         if num_to_kill == 0:
             break
+
+    # A leader should emerge
     time.sleep(10)
 
+    # Kill the rest of them
     for n in s:
         n.stop()
 
-def test2():
+def test_add_remove():
+    '''
+        test_failures: Creates 1 known node, and then slowly adds more. You should 
+            observe the number of known nodes slowly increasing as the leader allows
+            them to join. Then the leader. The remaining nodes should fight over 
+            the position, several of them may be elected, but one should emerge.
+    '''
+
+    # Create and start the sentinals
     addresss_book = {
         'leader':{
             'ip': 'localhost',
@@ -549,33 +574,30 @@ def test2():
         'node1':{
             'ip': 'localhost',
             'port': '5554'}
-        #'node2':{
-        #    'ip': 'localhost',
-        #    'port': '5555'},
     }
-
-    with open('address_book2.json', 'w') as outfile:
+    with open(address_book_fname, 'w') as outfile:
         json.dump(addresss_book, outfile)
 
-    node1 = Sentinel('address_book2.json', 'node1', 'follower', verbose=True)
-    node2 = Sentinel('address_book2.json', 'node2', 'follower', verbose=True)
-    node3 = Sentinel('address_book2.json', 'node3', 'follower', verbose=True)
-    node4 = Sentinel('address_book2.json', 'node4', 'follower', verbose=True)
+    node1 = Sentinel(address_book_fname, 'node1', 'follower', verbose=True)
+    node2 = Sentinel(address_book_fname, 'node2', 'follower', verbose=True)
+    node3 = Sentinel(address_book_fname, 'node3', 'follower', verbose=True)
+    node4 = Sentinel(address_book_fname, 'node4', 'follower', verbose=True)
 
     node1.start()
     node2.start()
     node3.start()
     node4.start()
 
-    time.sleep(10)
+    time.sleep(5)
 
+    # Kill the leader and one other
     node1.stop()
     node2.stop()
-    node3.stop()
 
     time.sleep(10)
 
+    node3.stop()
     node4.stop()
 
 if __name__ == '__main__':
-    test2()
+    test_add_remove()
