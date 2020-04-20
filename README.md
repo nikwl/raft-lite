@@ -1,13 +1,5 @@
 ## RAFT-Lite
-RAFT-Lite isn't really a good name for this repo, because it isn't exactly RAFT, though it uses much of the same terminology. Though I set out to re-implement RAFT, it kind of evolved as it came together, and as a result this system does not carry with it the same guarantees as RAFT. However, the implementation is relatively simple so upon inspection it should be easy to determine how it works. 
-
-### Caveats
-This program is designed to act as a 'Sentinel' for instances of other, larger programs. For the time being it could be thought of as a failure detector. Simply, it diverges from RAFT in the following ways:
-* All messages are broadcast. Nodes may filter incoming messages but this is done on the receiving end.
-* Nodes do not use a log. Instead they use terms to determine their relative progress. As a result the nodes can only be queried for their state, they cannot be used to store data. 
-* The system allows dynamic adding and removing of nodes without a configuration change. The trade off is that this can result in multiple leaders emerging during an election, which will result in one or both of the leaders stepping down, similar to how a leader steps down when they observe an active election with a higher term. However a single leader will always emerge. 
-
-This repo is under development, and will probably evolve into the standard RAFT implementation. I'm releasing this because... who knows, it might be helpful to someone, but only use it if you're okay with the above caveats. 
+My attempt at implementing RAFT using Python. There are several other implementations out there but for the most part I found other implementations difficult to understand or lacking networking componenets. The goal of this repo is an algorithm as simple (and as localized) as possible. All of the state transition code is defined in a single file and the network component is abstracted away so that it would be easy to convert it to use something like ROS or another python library. As I wanted to use the the servers (or nodes, or sentinals, as they're specified here) as a kind of failure detector for other distrubted programs, they can be spawned within a single python program or can span multiple programs. Intercommunication parameters are saved using a single 'address book' json file.
 
 ### Installation and Testing
 Clone the repo, create a new python environment and then run:
@@ -18,4 +10,13 @@ pip install -r requirements.txt
 To test the system run: 
 ```python 
 python Sentinel.py
+```
+
+To test the system on two different terminals run: 
+```python 
+python runmefirst.py
+```
+and on a second terminal run:
+```python 
+python runmesecond.py
 ```
