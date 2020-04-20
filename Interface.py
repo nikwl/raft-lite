@@ -3,24 +3,25 @@ import multiprocessing
 import Queue
 import time
 
-from MessageProtocol import MessageType
+from MessageProtocol import BaseMessage
 
 class Talker(multiprocessing.Process):
-	def __init__(self, identity):
+	def __init__(self, port):
 		super(Talker, self).__init__()
 
 		# Port to talk from
-		self.port = identity['address']
+		self.port = port
 
-		# Backoff amounts
+		# Backoff for this amount of time after creating the sockets
 		self.initial_backoff = 1.0
-		self.operation_backoff = 0.01
 
 		# Place to store outgoing messages
 		self.messages = multiprocessing.Queue()
 
-		# Signals
+		# When the thread is ready
 		self._ready_event = multiprocessing.Event()
+
+		# How you kill the thread
 		self._stop_event = multiprocessing.Event()
 
 	def stop(self):
@@ -44,11 +45,12 @@ class Talker(multiprocessing.Process):
 		self._ready_event.set()
 
 		while not self._stop_event.is_set():
+			# If there's nothing in the queue Queue.Empty will be thrown 
 			try:
 				pub_socket.send_json(self.messages.get_nowait())
 			except Queue.Empty:
 				pass
-			time.sleep(self.operation_backoff)
+			time.sleep(0.01)
 		
 		pub_socket.unbind("tcp://127.0.0.1:%s" % self.port)
 		pub_socket.close()
@@ -69,15 +71,14 @@ class Listener(multiprocessing.Process):
 		self.port_list = port_list
 		self.identity = identity
 
-		# Backoff amounts
+		# Backoff for this amount of time after creating the sockets
 		self.initial_backoff = 1.0
-		self.operation_backoff = 0.01
 
 		# Place to store incoming messages
 		self.messages = multiprocessing.Queue()
 		self.leader_messages = multiprocessing.Queue()
 
-		# Signals
+		# How you kill the thread
 		self._stop_event = multiprocessing.Event()
 
 	def stop(self):
@@ -90,29 +91,53 @@ class Listener(multiprocessing.Process):
 		sub_sock.setsockopt(zmq.SUBSCRIBE, '')
 		for p in [self.port_list[n]['port'] for n in self.port_list]:
 			sub_sock.connect("tcp://127.0.0.1:%s" % p)
+		
+		# Get the next availible port number
+		next_port = max([int(self.port_list[n]['port']) for n in self.port_list]) + 1
 
 		# Need to backoff to give the connections time to initizalize
 		time.sleep(self.initial_backoff)
-		
-		# Use this to add new connections
-		next_port = max([int(self.port_list[n]['port']) for n in self.port_list]) + 1
 
 		while not self._stop_event.is_set():
 			try:
-				msg = sub_sock.recv_json(zmq.NOBLOCK)	
-				# Check if this message is a heartbeat from someone else. If it is then they are the leader so empty the leader queue.
-				if ((msg['type'] == MessageType.Heartbeat) and (msg['sender'] != self.identity['address'])):
+				msg = sub_sock.recv_json(zmq.NOBLOCK)
+
+				# Check if this message is a connection request. If it is it can only be read by the leader, put it in the leader queue
+				if (msg['type'] == BaseMessage.ConnectionRequest):
+					#print(self.identity['address'] + ' got a new connection request')
+					# Update the message with the next port number
+					msg['data']['new_address'] = str(next_port)
+					
+					# Increment the port tracker
+					next_port = next_port + 1
+
+					# Put in the leader queue
+					self.leader_messages.put(msg)
+					continue
+
+				# Check if this message is a connection response. If it is then it was sent by the leader, and we should add this address to the subscribe list
+				elif (msg['type'] == BaseMessage.ConnectionResponse):
+					p = str(msg['data']['new_address'])
+					sub_sock.connect("tcp://127.0.0.1:%s" % p)
+
+					# If it was to us, we need to update our identity 
+					if ((msg['data']['node_name'] == self.identity['node_name']) and (msg['receiver'] == self.identity['address'])):
+						self.identity['address'] = msg['data']['new_address']
+					
+				# Check if this message is a heartbeat from someone else. If it is then they are the leader so empty the leader queue
+				if ((msg['type'] == BaseMessage.Heartbeat) and (msg['sender'] != self.identity['address'])):
 					try:
 						while True:
 							self.leader_messages.get_nowait()
 					except Queue.Empty:
 						pass
-				if ((msg['receiver'] == self.identity['address']) or (msg['receiver'] is None)):
-					self.messages.put(msg)
+
+				self.messages.put(msg)
+
 			except zmq.Again:
 				pass
 
-			time.sleep(self.operation_backoff)
+			time.sleep(0.01)
 		
 		sub_sock.close()
 	
