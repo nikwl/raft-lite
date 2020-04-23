@@ -12,7 +12,7 @@ from MessageProtocol import MessageType, MessageDirection, RequestVotesResults, 
 
 # Adjust these to test
 address_book_fname = 'address_book.json'
-total_nodes = 11
+total_nodes = 5
 start_port = 5557
 
 class Sentinel(threading.Thread):
@@ -75,6 +75,26 @@ class Sentinel(threading.Thread):
         self.talker.stop()
         self.listener.stop()
         self._terminate = True
+    
+    def pause(self):
+        '''
+            pause: Allows the user to pause a node. In this state nodes are removed from the system until un_pause is called. 
+        '''
+        self._set_current_role('none')
+        if (self.verbose):
+            print(self.address + ': pausing...')
+        
+    def un_pause(self):
+        '''
+            un_pause: Allows the user to unpause a node. If the node was not already paused, does nothing.
+        '''
+        if (self.check_role() == 'none'):
+            self._set_current_role('follower')
+            if (self.verbose):
+                print(self.address + ': unpausing...')
+        else:
+            if (self.verbose):
+                print(self.address + ': node was not paused, doing nothing')
 
     def run(self):
         # Wait for the interface to be ready
@@ -82,12 +102,14 @@ class Sentinel(threading.Thread):
 
         # Your role determines your action. Every time a state chance occurs, this loop will facilitate a transition to the next state. 
         while not self._terminate:
-            if self.current_role == 'leader':
+            if self.check_role() == 'leader':
                 self._leader()
-            elif self.current_role == 'follower':
+            elif self.check_role() == 'follower':
                 self._follower()
-            elif self.current_role == 'candidate':
+            elif self.check_role() == 'candidate':
                 self._candidate()
+            else:
+                time.sleep(1)
 
     def _follower(self):
         ''' 
@@ -102,7 +124,7 @@ class Sentinel(threading.Thread):
         # This will be when you've seen the most recent heartbeat
         most_recent_heartbeat = time.time()
 
-        while not self._terminate:
+        while ((not self._terminate) and (self.check_role() == 'follower')):
             incoming_message = self._get_message()
             if (incoming_message is not None):
 
@@ -132,6 +154,12 @@ class Sentinel(threading.Thread):
                         self.leader_id = incoming_message.leader_id
                         most_recent_heartbeat = time.time()
                         #print(self.address + ": commit index " + str(self.commit_index))
+
+                        # If leader has been resolved, check for any client requests
+                        if (self.leader_id):
+                            client_request = self._get_client_request()
+                            if (client_request is not None):
+                                self._send_acknowledge(MessageType.Heartbeat, incoming_message.leader_id, incoming_message.leader_commit, False, client_request)
                         
                     # Incoming message is some data to append
                     elif (incoming_message.type == MessageType.AppendEntries):
@@ -195,7 +223,7 @@ class Sentinel(threading.Thread):
         # Keep track of how long the election has been going
         time_election_going = time.time()
 
-        while not self._terminate:
+        while ((not self._terminate) and (self.check_role() == 'candidate')):
             incoming_message = self._get_message()
             if (incoming_message is not None):
 
@@ -222,16 +250,16 @@ class Sentinel(threading.Thread):
                     # If there's an election for someone else on a higher term, update your term, vote for them, and demote yourself
                     if (incoming_message.type == MessageType.RequestVotes):
                         if (incoming_message.term > self.current_term):
-                            self._send_vote(incoming_message.sender)
                             self._increment_term(incoming_message.term)
+                            self._send_vote(incoming_message.sender)
                             self._set_current_role('follower')
                             return
 
                     # If you see a heartbeat on the current term then someone else has been elected, update your term and demote yourself
                     elif (incoming_message.type == MessageType.Heartbeat):
                         if (incoming_message.term >= self.current_term):
-                            self.leader_id = incoming_message.leader_id
                             self._increment_term(incoming_message.term)
+                            self.leader_id = incoming_message.leader_id
                             self._set_current_role('follower')
                             return
             
@@ -280,10 +308,10 @@ class Sentinel(threading.Thread):
         self.heard_from = [time.time() for _ in range(self.current_num_nodes)]
 
         # Broadcast an entry to get everyone on the same page
-        entry = {'term': self.current_term, 'entry': 'Leader Entry'}
+        entry = {'term': self.current_term, 'entry': 'Leader Entry', 'id': -1}
         self._broadcast_append_entries(entry)
 
-        while not self._terminate:
+        while ((not self._terminate) and (self.check_role() == 'leader')):
 
             # First, send a heartbeat
             if ((time.time() - most_recent_heartbeat) > self.heartbeat_frequency):
@@ -291,6 +319,7 @@ class Sentinel(threading.Thread):
                 most_recent_heartbeat = time.time()
                 if (self.verbose):
                     print(self.address + ': sent heartbeat')
+                    #print(self.address + ': max committed index: ' + str(self.commit_index))
 
             # If you haven't heard from a node in a while and it's not up to date, resend the most recent append entries
             for node, index in enumerate(self.next_index):
@@ -331,20 +360,24 @@ class Sentinel(threading.Thread):
                                 print(self.address + ": updated standing is " + str(self.match_index))
 
                             # Determine the 'committable' indices
-                            num_nodes_committed_index = [0 for _ in range(self.current_num_nodes)]
-                            for j, i1 in enumerate(self.match_index):
-                                for i2 in self.match_index:
-                                    if ((i1 is not None) and (i2 is not None)):
-                                        if (i1 >= i2):
-                                            num_nodes_committed_index[j] += 1
-                            committable_indices = [index for index in num_nodes_committed_index if index >= (int(self.current_num_nodes / 2) + 1)]
-                            
+                            log_lengths = [int(i) for i in self.match_index if (i is not None)]
+                            log_lengths.sort(reverse=True)
+                            max_committable_index = 0
+                            for index in log_lengths:
+                                # Count how many other nodes this index is replicated on
+                                replicated_on = sum([1 if index <= i else 0 for i in log_lengths])
+                                if (replicated_on >= (int(self.current_num_nodes / 2) + 1)):
+                                    max_committable_index = index
+
                             # If there's a new committable index, then send the commit
-                            if (committable_indices):
-                                committable_index = self.match_index[num_nodes_committed_index.index(min(committable_indices))]      
-                                if (committable_index > self.commit_index):
-                                    self._broadcast_commmit_entries(committable_index)
-                        
+                            if (max_committable_index > self.commit_index):
+                                    self._broadcast_commmit_entries(max_committable_index)
+
+                    # If its a heartbeat ack then it's a new request
+                    elif (incoming_message.type == MessageType.Heartbeat):
+                        client_request = incoming_message.entries
+                        self._broadcast_append_entries(client_request)
+
                 # Handle incoming requests
                 elif (incoming_message.direction == MessageDirection.Request):
 
@@ -366,7 +399,7 @@ class Sentinel(threading.Thread):
 
         return
                     
-    def client_request(self, value):
+    def client_request(self, value, id_=None):
         '''
             client_request: Public function to enqueue a value. Will return 
                 False if enqueued on a node that is not the leader. Else
@@ -374,15 +407,14 @@ class Sentinel(threading.Thread):
             Inputs:
                 value: any singleton data type
         '''
+        if (id_ is None):
+            id_ = -1
         with self.client_lock:
-            # If node is not the leader, then exit
-            if (self.current_role != 'leader'):
-                return False
-
             # Create and enqueue the entry
             entry = {
                 'term': self.current_term,
-                'entry': value
+                'entry': value,
+                'id': id_
             }
             self.client_queue.append(entry)
         return True
@@ -394,6 +426,17 @@ class Sentinel(threading.Thread):
         with self.client_lock:
             role = copy.deepcopy(self.current_role)
         return role
+
+    def check_committed_entry(self, id_=None):
+        ''' 
+            check_committed_entry: Public function to check the last entry committed.
+        '''
+        if (id_ is None):
+            return self.log[self.commit_index]['entry']
+        entry_list = [e for e in self.log[:self.commit_index + 1] if e['id'] == id_]
+        if entry_list:
+            return entry_list[-1]['entry']
+        return None
 
     def _send_message(self, message):
         '''
@@ -654,7 +697,7 @@ class Sentinel(threading.Thread):
         )
         self._send_message(message)
 
-    def _send_acknowledge(self, reason, receiver, leader_commit, success):
+    def _send_acknowledge(self, reason, receiver, leader_commit, success, entry=None):
         message = AppendEntriesMessage(
             type_ = reason,
             term = self.current_term,
@@ -664,7 +707,7 @@ class Sentinel(threading.Thread):
             leader_id =self.leader_id ,
             prev_log_index = self.last_applied_index,
             prev_log_term = self.last_applied_term,
-            entries = None,
+            entries = entry,
             leader_commit = leader_commit, 
             results = AppendEntriesResults(
                 term = self.current_term,
@@ -707,21 +750,21 @@ def test_failures():
     time.sleep(2)
 
     # Make some requests
-    #for i in range(10):
-    #    for n in s:
-    #        n.client_request(i)
+    for i in range(10):
+        s[0].client_request(i)
     
     time.sleep(2)
 
     # Kill half of them, including the leader
     l = [n for n in s if (n.check_role() == 'leader')][0]
     l.stop()
-    num_to_kill = int(total_nodes / 2) - 2
+    num_to_kill = int(total_nodes / 2) - 1
     for n in s:
         num_to_kill = num_to_kill - 1
-        n.stop()
         if num_to_kill == 0:
             break
+        else:
+            n.stop()
 
     # Wait for a bit
     time.sleep(10)
