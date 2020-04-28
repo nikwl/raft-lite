@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from Sentinel import Sentinel
+from Raft import RaftNode
 import json
 import time
 
@@ -15,8 +15,8 @@ if __name__ == '__main__':
     with open(address_book_fname, 'w') as outfile:
         json.dump(d, outfile)
 
-    s0 = Sentinel(address_book_fname, 'node0', 'follower')
-    s1 = Sentinel(address_book_fname, 'node1', 'follower')
+    s0 = RaftNode(address_book_fname, 'node0', 'follower')
+    s1 = RaftNode(address_book_fname, 'node1', 'follower')
 
     s0.start()
     s1.start()

@@ -15,7 +15,7 @@ address_book_fname = 'address_book.json'
 total_nodes = 5
 start_port = 5557
 
-class Sentinel(threading.Thread):
+class RaftNode(threading.Thread):
     def __init__(self, config_file, name, role, verbose=True):
         threading.Thread.__init__(self) 
         
@@ -75,10 +75,56 @@ class Sentinel(threading.Thread):
         self.talker.stop()
         self.listener.stop()
         self._terminate = True
-    
+
+    def client_request(self, value, id_num=None):
+        '''
+            client_request: Public function to enqueue a value. If the node
+                is not the leader, this request will be forewarded to the leader
+                before being appended. If the system is in a transitionary state, 
+                the request may not be appended at all, so this should be retried.
+                If no id_num is specified, the id is set to -1.
+            Inputs:
+                value: any singleton data type.
+                id_num: an identifying number. Can be used to query this log entry. 
+        '''
+        if (id_num is None):
+            id_num = -1
+        with self.client_lock:
+            # Create and enqueue the entry
+            entry = {
+                'term': self.current_term,
+                'entry': value,
+                'id': id_num
+            }
+            self.client_queue.append(entry)
+
+    def check_committed_entry(self, id_num=None):
+        ''' 
+            check_committed_entry: Public function to check the last entry committed.
+                Optionally specify an id_num to search for. If specified, will return 
+                the most recent entry with this id_num. 
+            Inputs:
+                id_num: returns the most recent entry with this id_num. 
+        '''
+        if (id_num is None):
+            return self.log[self.commit_index]['entry']
+        entry_list = [e for e in self.log[:self.commit_index + 1] if e['id'] == id_num]
+        if entry_list:
+            return entry_list[-1]['entry']
+        return None
+
+    def check_role(self):
+        ''' 
+            check_role: Public function to check the role of a given node.
+        '''
+        with self.client_lock:
+            role = copy.deepcopy(self.current_role)
+        return role
+
     def pause(self):
         '''
-            pause: Allows the user to pause a node. In this state nodes are removed from the system until un_pause is called. 
+            pause: Allows the user to pause a node. In this state nodes are "removed" 
+                from the system until un_pause is called. 
         '''
         self._set_current_role('none')
         if (self.verbose):
@@ -86,7 +132,8 @@ class Sentinel(threading.Thread):
         
     def un_pause(self):
         '''
-            un_pause: Allows the user to unpause a node. If the node was not already paused, does nothing.
+            un_pause: Allows the user to unpause a node. If the node was not already 
+                paused, does nothing.
         '''
         if (self.check_role() == 'none'):
             self._set_current_role('follower')
@@ -97,6 +144,9 @@ class Sentinel(threading.Thread):
                 print(self.address + ': node was not paused, doing nothing')
 
     def run(self):
+        '''
+            run: Called when the node starts. Facilitates state transitions. 
+        '''
         # Wait for the interface to be ready
         time.sleep(self.listener.initial_backoff)
 
@@ -398,45 +448,6 @@ class Sentinel(threading.Thread):
                 self._broadcast_append_entries(client_request)
 
         return
-                    
-    def client_request(self, value, id_=None):
-        '''
-            client_request: Public function to enqueue a value. Will return 
-                False if enqueued on a node that is not the leader. Else
-                will return true. Value is enqueued as an entry. 
-            Inputs:
-                value: any singleton data type
-        '''
-        if (id_ is None):
-            id_ = -1
-        with self.client_lock:
-            # Create and enqueue the entry
-            entry = {
-                'term': self.current_term,
-                'entry': value,
-                'id': id_
-            }
-            self.client_queue.append(entry)
-        return True
-
-    def check_role(self):
-        ''' 
-            check_role: Public function to check the role of a given node. 
-        '''
-        with self.client_lock:
-            role = copy.deepcopy(self.current_role)
-        return role
-
-    def check_committed_entry(self, id_=None):
-        ''' 
-            check_committed_entry: Public function to check the last entry committed.
-        '''
-        if (id_ is None):
-            return self.log[self.commit_index]['entry']
-        entry_list = [e for e in self.log[:self.commit_index + 1] if e['id'] == id_]
-        if entry_list:
-            return entry_list[-1]['entry']
-        return None
 
     def _send_message(self, message):
         '''
@@ -742,7 +753,7 @@ def test_failures():
     node_num = 1
     for p in range(start_port, start_port+total_nodes):
         name = 'node' + str(node_num)
-        s.append(Sentinel(address_book_fname, name, 'follower'))
+        s.append(RaftNode(address_book_fname, name, 'follower'))
         node_num = node_num + 1
     for n in s:
         n.start()

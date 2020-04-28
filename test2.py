@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
-from Sentinel import Sentinel
+from Raft import RaftNode
 import time
 
 address_book_fname = 'address_book.json'
 
 if __name__ == '__main__':
-    s2 = Sentinel(address_book_fname, 'node2', 'follower')
-    s3 = Sentinel(address_book_fname, 'node3', 'follower')
+    s2 = RaftNode(address_book_fname, 'node2', 'follower')
+    s3 = RaftNode(address_book_fname, 'node3', 'follower')
 
     s2.start()
     s3.start()
