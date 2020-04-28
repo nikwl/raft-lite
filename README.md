@@ -15,25 +15,32 @@ python Raft.py
 ### Usage
 ```python 
 from Raft import RaftNode
+import json
 import time
 
-# Define intercommunication parameters.
-address_book_fname = 'address_book.json' 
+# Create the intercommunication json
+comm_file = 'address_book.json' 
+comm_dict = {"node0": {"ip": "127.0.0.1", "port": "5567"}, 
+  "node1": {"ip": "127.0.0.1", "port": "5566"}, 
+  "node2": {"ip": "127.0.0.1", "port": "5565"},
+  "node3": {"ip": "127.0.0.1", "port": "5564"}}
+with open(comm_file, 'w') as outfile:
+  json.dump(comm_dict, outfile)
 
 # Start a few nodes
-nodes = [RaftNode(address_book_fname, 'node0', 'follower'),
-         RaftNode(address_book_fname, 'node1', 'follower'), 
-         RaftNode(address_book_fname, 'node2', 'follower')]
+nodes = [RaftNode(comm_file, 'node0', 'follower'),
+         RaftNode(comm_file, 'node1', 'follower'), 
+         RaftNode(comm_file, 'node2', 'follower')]
 for n in nodes:
   n.start()
 
 # Let a leader emerge
-time.sleep(1)
+time.sleep(2)
 
 # Make some requests
 for val in range(5):
-  nodes[0].client_request(val)
-time.sleep(1)
+  nodes[0].client_request({'val': val})
+time.sleep(5)
 
 # Check and see what the most recent entry is
 for n in nodes:
