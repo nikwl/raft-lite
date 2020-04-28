@@ -47,7 +47,6 @@ for n in nodes:
 ### TODO
 List of things that need to be changed/updated...
 * Interface uses broadcast for all messages. Targeted messages are filtered on the receiving side. This causes network congestion and probably impacts performance. 
-* Communication parameters only support local networking. This should be updated to support networking between pyhsical machines. 
 * Committal should have its own message type. 
 * Add support for configuration change. 
 * Add support for log compaction. 

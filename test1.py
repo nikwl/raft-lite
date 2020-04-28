@@ -7,10 +7,10 @@ import time
 address_book_fname = 'address_book.json'
 
 if __name__ == '__main__':
-    d = {"node0": {"ip": "localhost", "port": "5567"}, 
-         "node1": {"ip": "localhost", "port": "5566"}, 
-         "node2": {"ip": "localhost", "port": "5565"},
-         "node3": {"ip": "localhost", "port": "5564"}}
+    d = {"node0": {"ip": "127.0.0.1", "port": "5567"}, 
+         "node1": {"ip": "127.0.0.1", "port": "5566"}, 
+         "node2": {"ip": "127.0.0.1", "port": "5565"},
+         "node3": {"ip": "127.0.0.1", "port": "5564"}}
         
     with open(address_book_fname, 'w') as outfile:
         json.dump(d, outfile)

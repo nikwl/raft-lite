@@ -10,7 +10,7 @@ class Talker(multiprocessing.Process):
 		super(Talker, self).__init__()
 
 		# Port to talk from
-		self.port = identity['address']
+		self.address = identity['address']
 
 		# Backoff amounts
 		self.initial_backoff = 1.0
@@ -32,7 +32,7 @@ class Talker(multiprocessing.Process):
 		pub_socket = context.socket(zmq.PUB)
 		while True:
 			try:
-				pub_socket.bind("tcp://127.0.0.1:%s" % self.port)
+				pub_socket.bind("tcp://%s" % self.address)
 				break
 			except zmq.ZMQError:
 				time.sleep(0.1)
@@ -50,7 +50,7 @@ class Talker(multiprocessing.Process):
 				pass
 			time.sleep(self.operation_backoff)
 		
-		pub_socket.unbind("tcp://127.0.0.1:%s" % self.port)
+		pub_socket.unbind("tcp://%s" % self.address)
 		pub_socket.close()
 
 	def send_message(self, msg):
@@ -66,7 +66,7 @@ class Listener(multiprocessing.Process):
 		super(Listener, self).__init__()
 
 		# List of ports to subscribe to
-		self.port_list = port_list
+		self.address_list = port_list
 		self.identity = identity
 
 		# Backoff amounts
@@ -88,14 +88,11 @@ class Listener(multiprocessing.Process):
 		context = zmq.Context()
 		sub_sock = context.socket(zmq.SUB)
 		sub_sock.setsockopt(zmq.SUBSCRIBE, '')
-		for p in [self.port_list[n]['port'] for n in self.port_list]:
-			sub_sock.connect("tcp://127.0.0.1:%s" % p)
+		for a in self.address_list:
+			sub_sock.connect("tcp://%s" % a)
 
 		# Need to backoff to give the connections time to initizalize
 		time.sleep(self.initial_backoff)
-		
-		# Use this to add new connections
-		next_port = max([int(self.port_list[n]['port']) for n in self.port_list]) + 1
 
 		while not self._stop_event.is_set():
 			try:

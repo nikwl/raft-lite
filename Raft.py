@@ -28,45 +28,43 @@ class RaftNode(threading.Thread):
         self.client_queue = deque()
         self.client_lock = threading.Lock()
 
-        # List of known nodes
+        # List of known nodes and their communication information
         address_book = self._load_config(config_file, name)
-        self.node_addresses = [address_book[a]['port'] for a in address_book if a != 'leader']
+        self.node_addresses = [address_book[a]['ip'] + ':' + address_book[a]['port'] for a in address_book if a != 'leader']
+        self.address = address_book[name]['ip'] + ':' + address_book[name]['port']
 
         # Timing variables
-        self.election_timeout = random.uniform(0.4, 0.5)        # Failed vote backoff, used for pretty much all timing related things
-        self.heartbeat_frequency = 0.2                          # How often to send heartbeat (should be less than the election timeout)
-        self.resend_time = 2.0                                  # How often to resend an append entries
+        self.election_timeout = random.uniform(0.4, 0.5)                    # Failed vote backoff, used for pretty much all timing related things.
+        self.heartbeat_frequency = 0.2                                      # How often to send heartbeat (should be less than the election timeout).
+        self.resend_time = 2.0                                              # How often to resend an append entries if you havent heard from a node in a while. 
 
         # State variables that I've added
-        self.address = address_book[name]['port']               # Your address
-        self.current_num_nodes = len(self.node_addresses)       # Number of nodes in the system
-        self.current_role = role                                # Your role in the system (follower, candidate, leader, pending)
-        self.leader_id = None                                   # Who you think the current leader is
+        self.name = name                                                    # Your name. Used mostly for debugging.
+        self.current_num_nodes = len(self.node_addresses)                   # Number of nodes in the system.
+        self.current_role = role                                            # Your role in the system (follower, candidate, leader, pending).
+        self.leader_id = None                                               # Who you think the current leader is.
         
         # Persistent state variables
-        self.current_term = 1                                   # Election term
-        self.voted_for = None                                   # Who have you voted in this term 
-        self.log = [{
-            'term': 1,
-            'entry': 'Init Entry'  
-        }]
+        self.current_term = 1                                               # Your current election term.
+        self.voted_for = None                                               # Who have you voted in this term. None means you haven't voted for anyone. 
+        self.log = [{'term': 1, 'entry': 'Init Entry', 'id': -1}]           # Your log. Log entries are a dict with the following fields: term, entry, id.
     
         # Volatile state variables
-        self.commit_index = 0                                   # Index of the highest known committed entry in the system
-        self.last_applied_index = 0                             # Index of the highest entry you have committed
-        self.last_applied_term = 1                              # Term of the highest entry you have committed
+        self.commit_index = 0                                               # Index of the highest known committed entry in the system.
+        self.last_applied_index = 0                                         # Index of the highest entry you have committed. Note that functionally this is the same as commit_index.
+        self.last_applied_term = 1                                          # Term of the highest entry you have committed.
 
         # Volotile state leader variables 
         self.next_index = [None for _ in range(self.current_num_nodes)]     # Index to send to each node next. None means up to date
         self.match_index = [0 for _ in range(self.current_num_nodes)]       # Index of highest committed entry on each node
-        self.heard_from = [0 for _ in range(self.current_num_nodes)]
+        self.heard_from = [0 for _ in range(self.current_num_nodes)]        # Time last heard from each node. 
 
         # Start both ends of your interface
         identity = {
-            'address':      self.address,
+            'address':      self.address,          
             'node_name':    name
         }
-        self.listener = Listener(port_list=address_book, identity=identity)
+        self.listener = Listener(port_list=self.node_addresses, identity=identity)
         self.listener.start()
         self.talker = Talker(identity=identity)
         self.talker.start()
@@ -128,7 +126,7 @@ class RaftNode(threading.Thread):
         '''
         self._set_current_role('none')
         if (self.verbose):
-            print(self.address + ': pausing...')
+            print(self.name + ': pausing...')
         
     def un_pause(self):
         '''
@@ -138,10 +136,10 @@ class RaftNode(threading.Thread):
         if (self.check_role() == 'none'):
             self._set_current_role('follower')
             if (self.verbose):
-                print(self.address + ': unpausing...')
+                print(self.name + ': unpausing...')
         else:
             if (self.verbose):
-                print(self.address + ': node was not paused, doing nothing')
+                print(self.name + ': node was not paused, doing nothing')
 
     def run(self):
         '''
@@ -203,7 +201,6 @@ class RaftNode(threading.Thread):
                             self._increment_term(incoming_message.term)
                         self.leader_id = incoming_message.leader_id
                         most_recent_heartbeat = time.time()
-                        #print(self.address + ": commit index " + str(self.commit_index))
 
                         # If leader has been resolved, check for any client requests
                         if (self.leader_id):
@@ -255,7 +252,7 @@ class RaftNode(threading.Thread):
         ''' 
 
         if(self.verbose):
-            print(self.address + ': became candidate')
+            print(self.name + ': became candidate')
 
         # If you're a candidate, then this is a new term
         self._increment_term()
@@ -286,8 +283,8 @@ class RaftNode(threading.Thread):
                             votes_for_me += 1
                         total_votes += 1
 
-                        #print(self.address + ": votes for me " + str(votes_for_me))
-                        #print(self.address + ": total votes " + str(total_votes))
+                        #print(self.name + ": votes for me " + str(votes_for_me))
+                        #print(self.name + ": total votes " + str(total_votes))
                             
                         # If you have a majority, promote yourself
                         if ((votes_for_me > int(self.current_num_nodes / 2)) or (self.current_num_nodes == 1)):
@@ -316,7 +313,7 @@ class RaftNode(threading.Thread):
             # If this election has been going for a while we're probably deadlocked, restart the election
             if ((time.time() - time_election_going) > self.election_timeout):
                 if(self.verbose):
-                    print(self.address + ': election timed out')
+                    print(self.name + ': election timed out')
                 self._set_current_role('candidate')
                 return
         
@@ -339,7 +336,7 @@ class RaftNode(threading.Thread):
         ''' 
         
         if(self.verbose):
-            print(self.address + ': became leader')
+            print(self.name + ': became leader')
 
         # First things first, send a heartbeat
         self._send_heartbeat()
@@ -368,8 +365,8 @@ class RaftNode(threading.Thread):
                 self._send_heartbeat()
                 most_recent_heartbeat = time.time()
                 if (self.verbose):
-                    print(self.address + ': sent heartbeat')
-                    #print(self.address + ': max committed index: ' + str(self.commit_index))
+                    print(self.name + ': sent heartbeat')
+                    #print(self.name + ': max committed index: ' + str(self.commit_index))
 
             # If you haven't heard from a node in a while and it's not up to date, resend the most recent append entries
             for node, index in enumerate(self.next_index):
@@ -407,7 +404,7 @@ class RaftNode(threading.Thread):
                                 self._send_append_entries(next_index - 1, self.log[next_index - 1]['term'], self.log[next_index], incoming_message.sender)
                             
                             if (self.verbose):
-                                print(self.address + ": updated standing is " + str(self.match_index))
+                                print(self.name + ": updated standing is " + str(self.match_index))
 
                             # Determine the 'committable' indices
                             log_lengths = [int(i) for i in self.match_index if (i is not None)]
@@ -439,7 +436,7 @@ class RaftNode(threading.Thread):
                             self._set_current_role('follower')
 
                             if(self.verbose):
-                                print(self.address + ': saw higher term, demoting')
+                                print(self.name + ': saw higher term, demoting')
                             return
             
             # Get any pending client requests
@@ -733,14 +730,14 @@ def test_failures():
             A leader should emerge after the crash. 
     '''
     # Create the address book with x number of nodes
-    d = {'leader':{'ip': 'localhost',
+    d = {'leader':{'ip': '127.0.0.1',
             'port': '5553'}}
 
     node_num = 1
     for p in range(start_port, start_port+total_nodes):
         name = 'node' + str(node_num)
         d[str(name)] = { 
-            'ip': 'localhost',
+            'ip': '127.0.0.1',
             'port': str(p)
         }
         node_num = node_num + 1
