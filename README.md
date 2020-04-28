@@ -22,8 +22,7 @@ import time
 comm_file = 'address_book.json' 
 comm_dict = {"node0": {"ip": "127.0.0.1", "port": "5567"}, 
   "node1": {"ip": "127.0.0.1", "port": "5566"}, 
-  "node2": {"ip": "127.0.0.1", "port": "5565"},
-  "node3": {"ip": "127.0.0.1", "port": "5564"}}
+  "node2": {"ip": "127.0.0.1", "port": "5565"}}
 with open(comm_file, 'w') as outfile:
   json.dump(comm_dict, outfile)
 
