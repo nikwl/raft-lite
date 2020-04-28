@@ -47,6 +47,5 @@ for n in nodes:
 ### TODO
 List of things that need to be changed/updated...
 * Interface uses broadcast for all messages. Targeted messages are filtered on the receiving side. This causes network congestion and probably impacts performance. 
-* Committal should have its own message type. 
 * Add support for configuration change. 
 * Add support for log compaction. 

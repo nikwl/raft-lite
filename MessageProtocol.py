@@ -7,6 +7,7 @@ class MessageType():
 	Acknowledge = 3
 	AppendEntries = 4
 	Committal = 5
+	ClientRequest = 6
 
 class MessageDirection():
 	Request = 0

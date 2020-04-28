@@ -10,7 +10,7 @@ class Talker(multiprocessing.Process):
 		super(Talker, self).__init__()
 
 		# Port to talk from
-		self.address = identity['address']
+		self.address = identity['my_id']
 
 		# Backoff amounts
 		self.initial_backoff = 1.0
@@ -98,13 +98,13 @@ class Listener(multiprocessing.Process):
 			try:
 				msg = sub_sock.recv_json(zmq.NOBLOCK)	
 				# Check if this message is a heartbeat from someone else. If it is then they are the leader so empty the leader queue.
-				if ((msg['type'] == MessageType.Heartbeat) and (msg['sender'] != self.identity['address'])):
+				if ((msg['type'] == MessageType.Heartbeat) and (msg['sender'] != self.identity['my_id'])):
 					try:
 						while True:
 							self.leader_messages.get_nowait()
 					except Queue.Empty:
 						pass
-				if ((msg['receiver'] == self.identity['address']) or (msg['receiver'] is None)):
+				if ((msg['receiver'] == self.identity['my_id']) or (msg['receiver'] is None)):
 					self.messages.put(msg)
 			except zmq.Again:
 				pass
