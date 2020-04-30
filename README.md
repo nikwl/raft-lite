@@ -23,13 +23,11 @@ comm_file = 'address_book.json'
 comm_dict = {"node0": {"ip": "127.0.0.1", "port": "5567"}, 
   "node1": {"ip": "127.0.0.1", "port": "5566"}, 
   "node2": {"ip": "127.0.0.1", "port": "5565"}}
-with open(comm_file, 'w') as outfile:
-  json.dump(comm_dict, outfile)
 
 # Start a few nodes
-nodes = [RaftNode(comm_file, 'node0', 'follower'),
-         RaftNode(comm_file, 'node1', 'follower'), 
-         RaftNode(comm_file, 'node2', 'follower')]
+nodes = [RaftNode(comm_dict, 'node0', 'follower'),
+         RaftNode(comm_dict, 'node1', 'follower'), 
+         RaftNode(comm_dict, 'node2', 'follower')]
 for n in nodes:
   n.start()
 
