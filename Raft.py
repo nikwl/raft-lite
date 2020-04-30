@@ -16,7 +16,7 @@ total_nodes = 5
 start_port = 5557
 
 class RaftNode(threading.Thread):
-    def __init__(self, config, name, role, verbose=True):
+    def __init__(self, config, name, role='follower', verbose=True):
         threading.Thread.__init__(self) 
         
         self._terminate = False

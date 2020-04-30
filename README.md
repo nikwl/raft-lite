@@ -25,9 +25,9 @@ comm_dict = {"node0": {"ip": "127.0.0.1", "port": "5567"},
   "node2": {"ip": "127.0.0.1", "port": "5565"}}
 
 # Start a few nodes
-nodes = [RaftNode(comm_dict, 'node0', 'follower'),
-         RaftNode(comm_dict, 'node1', 'follower'), 
-         RaftNode(comm_dict, 'node2', 'follower')]
+nodes = [RaftNode(comm_dict, 'node0'),
+         RaftNode(comm_dict, 'node1'), 
+         RaftNode(comm_dict, 'node2')]
 for n in nodes:
   n.start()
 
