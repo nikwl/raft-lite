@@ -152,15 +152,18 @@ class RaftNode(threading.Thread):
         time.sleep(self.listener.initial_backoff)
 
         # Your role determines your action. Every time a state chance occurs, this loop will facilitate a transition to the next state. 
-        while not self._terminate:
-            if self.check_role() == 'leader':
-                self._leader()
-            elif self.check_role() == 'follower':
-                self._follower()
-            elif self.check_role() == 'candidate':
-                self._candidate()
-            else:
-                time.sleep(1)
+        try:
+            while not self._terminate:
+                if self.check_role() == 'leader':
+                    self._leader()
+                elif self.check_role() == 'follower':
+                    self._follower()
+                elif self.check_role() == 'candidate':
+                    self._candidate()
+                else:
+                    time.sleep(1)
+        except KeyboardInterrupt:
+            self.stop()
 
     def _follower(self):
         ''' 

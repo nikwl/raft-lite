@@ -48,7 +48,11 @@ class Talker(multiprocessing.Process):
 				pub_socket.send_json(self.messages.get_nowait())
 			except Queue.Empty:
 				pass
-			time.sleep(self.operation_backoff)
+			
+			try:
+				time.sleep(self.operation_backoff)
+			except KeyboardInterrupt:
+				break
 		
 		pub_socket.unbind("tcp://%s" % self.address)
 		pub_socket.close()
@@ -109,7 +113,10 @@ class Listener(multiprocessing.Process):
 			except zmq.Again:
 				pass
 
-			time.sleep(self.operation_backoff)
+			try:
+				time.sleep(self.operation_backoff)
+			except KeyboardInterrupt:
+				break
 		
 		sub_sock.close()
 	
