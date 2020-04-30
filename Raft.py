@@ -400,7 +400,8 @@ class RaftNode(threading.Thread):
                                 self.match_index[sender_index] = self.next_index[sender_index]
                                 self.next_index[sender_index] += 1
                             else:
-                                self.next_index[sender_index] -= 1
+                                if (self.next_index[sender_index] != 1):
+                                    self.next_index[sender_index] -= 1
 
                             # Are there more entries to send to bring this node up to date?
                             if self.next_index[sender_index] > self._log_max_index():
