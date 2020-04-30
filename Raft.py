@@ -16,7 +16,7 @@ total_nodes = 5
 start_port = 5557
 
 class RaftNode(threading.Thread):
-    def __init__(self, config_file, name, role, verbose=True):
+    def __init__(self, config, name, role, verbose=True):
         threading.Thread.__init__(self) 
         
         self._terminate = False
@@ -29,7 +29,10 @@ class RaftNode(threading.Thread):
         self.client_lock = threading.Lock()
 
         # List of known nodes and their communication information
-        address_book = self._load_config(config_file, name)
+        if (isinstance(config, dict)):
+            address_book = config
+        else:
+            address_book = self._load_config(config, name)
         self.all_ids = [address_book[a]['ip'] + ':' + address_book[a]['port'] for a in address_book if a != 'leader']
         self.my_id = address_book[name]['ip'] + ':' + address_book[name]['port']
 
@@ -461,8 +464,8 @@ class RaftNode(threading.Thread):
         '''
         return parse_json_message(self.listener.get_message())
 
-    def _load_config(self, config_file, name):
-        with open(config_file, 'r') as infile:
+    def _load_config(self, config, name):
+        with open(config, 'r') as infile:
             data = json.load(infile)
         return data
 
