@@ -12,7 +12,7 @@ from MessageProtocol import MessageType, MessageDirection, RequestVotesResults, 
 
 # Adjust these to test
 address_book_fname = 'address_book.json'
-total_nodes = 5
+total_nodes = 11
 start_port = 5557
 
 class RaftNode(threading.Thread):
@@ -37,8 +37,8 @@ class RaftNode(threading.Thread):
         self.my_id = address_book[name]['ip'] + ':' + address_book[name]['port']
 
         # Timing variables
-        self.election_timeout = random.uniform(0.4, 0.5)                    # Failed vote backoff, used for pretty much all timing related things.
-        self.heartbeat_frequency = 0.2                                      # How often to send heartbeat (should be less than the election timeout).
+        self.election_timeout = random.uniform(0.1, 0.5)                    # Failed vote backoff, used for pretty much all timing related things.
+        self.heartbeat_frequency = 0.01                                     # How often to send heartbeat (should be less than the election timeout).
         self.resend_time = 2.0                                              # How often to resend an append entries if you havent heard from a node in a while. 
 
         # State variables that I've added
@@ -354,7 +354,7 @@ class RaftNode(threading.Thread):
         self.leader_id = self.my_id
 
         # Assume all other nodes are up to date with your log
-        self.match_index = [None for _ in range(self.current_num_nodes)]
+        self.match_index = [self.commit_index for _ in range(self.current_num_nodes)]
         self.next_index = [None for _ in range(self.current_num_nodes)]
 
         # Reset heard from
@@ -371,7 +371,8 @@ class RaftNode(threading.Thread):
                 self._send_heartbeat()
                 most_recent_heartbeat = time.time()
                 if (self.verbose):
-                    print(self.name + ': sent heartbeat')
+                    pass
+                    #print(self.name + ': sent heartbeat')
                     #print(self.name + ': max committed index: ' + str(self.commit_index))
 
             # If you haven't heard from a node in a while and it's not up to date, resend the most recent append entries
@@ -411,7 +412,7 @@ class RaftNode(threading.Thread):
                                 self._send_append_entries(next_index - 1, self.log[next_index - 1]['term'], self.log[next_index], incoming_message.sender)
                             
                             if (self.verbose):
-                                print(self.name + ": updated standing is " + str(self.match_index))
+                                print(self.name + ": updated standing is " + str(self.match_index) + " my index: " + str(self._log_max_index()))
 
                             # Determine the 'committable' indices
                             log_lengths = [int(i) for i in self.match_index if (i is not None)]
@@ -776,30 +777,31 @@ def test_failures():
         node_num = node_num + 1
     for n in s:
         n.start()
-
     time.sleep(2)
 
     # Make some requests
     for i in range(10):
         s[0].client_request(i)
-    
-    time.sleep(2)
+    time.sleep(3)
 
-    # Kill half of them, including the leader
+    # Pause about half of them, including the leader
     l = [n for n in s if (n.check_role() == 'leader')][0]
-    l.stop()
+    l.pause()
     num_to_kill = int(total_nodes / 2) - 1
     for n in s:
         num_to_kill = num_to_kill - 1
         if num_to_kill == 0:
             break
         else:
-            n.stop()
+            n.pause()
+    time.sleep(5)
 
-    # Wait for a bit
-    time.sleep(10)
+    # Unpause them
+    for n in s:
+        n.un_pause()
+    time.sleep(5)
 
-    # Kill the rest of them
+    # Need to do this before closing
     for n in s:
         n.stop() 
 

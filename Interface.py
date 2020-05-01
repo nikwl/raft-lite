@@ -14,7 +14,7 @@ class Talker(multiprocessing.Process):
 
 		# Backoff amounts
 		self.initial_backoff = 1.0
-		self.operation_backoff = 0.01
+		self.operation_backoff = 0.0001
 
 		# Place to store outgoing messages
 		self.messages = multiprocessing.Queue()
@@ -47,10 +47,10 @@ class Talker(multiprocessing.Process):
 			try:
 				pub_socket.send_json(self.messages.get_nowait())
 			except Queue.Empty:
-				pass
-			
-			try:
-				time.sleep(self.operation_backoff)
+				try:
+					time.sleep(self.operation_backoff)
+				except KeyboardInterrupt:
+					break
 			except KeyboardInterrupt:
 				break
 		
@@ -75,11 +75,9 @@ class Listener(multiprocessing.Process):
 
 		# Backoff amounts
 		self.initial_backoff = 1.0
-		self.operation_backoff = 0.01
 
 		# Place to store incoming messages
 		self.messages = multiprocessing.Queue()
-		self.leader_messages = multiprocessing.Queue()
 
 		# Signals
 		self._stop_event = multiprocessing.Event()
@@ -95,26 +93,20 @@ class Listener(multiprocessing.Process):
 		for a in self.address_list:
 			sub_sock.connect("tcp://%s" % a)
 
+		# Poller lets you specify a timeout
+		poller = zmq.Poller()
+		poller.register(sub_sock, zmq.POLLIN)
+
 		# Need to backoff to give the connections time to initizalize
 		time.sleep(self.initial_backoff)
 
 		while not self._stop_event.is_set():
 			try:
-				msg = sub_sock.recv_json(zmq.NOBLOCK)	
-				# Check if this message is a heartbeat from someone else. If it is then they are the leader so empty the leader queue.
-				if ((msg['type'] == MessageType.Heartbeat) and (msg['sender'] != self.identity['my_id'])):
-					try:
-						while True:
-							self.leader_messages.get_nowait()
-					except Queue.Empty:
-						pass
-				if ((msg['receiver'] == self.identity['my_id']) or (msg['receiver'] is None)):
-					self.messages.put(msg)
-			except zmq.Again:
-				pass
-
-			try:
-				time.sleep(self.operation_backoff)
+				obj = dict(poller.poll(100))
+				if sub_sock in obj and obj[sub_sock] == zmq.POLLIN:
+					msg = sub_sock.recv_json()	
+					if ((msg['receiver'] == self.identity['my_id']) or (msg['receiver'] is None)):
+						self.messages.put(msg)
 			except KeyboardInterrupt:
 				break
 		
@@ -124,14 +116,6 @@ class Listener(multiprocessing.Process):
 		# If there's nothing in the queue Queue.Empty will be thrown
 		try:
 			msg = self.messages.get_nowait()
-		except Queue.Empty:
-			return None
-		return msg
-
-	def get_leader_message(self):
-		# If there's nothing in the queue Queue.Empty will be thrown
-		try:
-			msg = self.leader_messages.get_nowait()
 		except Queue.Empty:
 			return None
 		return msg
