@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from Raft import RaftNode
+from Raft.Raft import RaftNode
 import time
 
 address_book_fname = 'address_book.json'

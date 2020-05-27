@@ -13,6 +13,7 @@ from MessageProtocol import MessageType, MessageDirection, RequestVotesResults, 
 # Adjust these to test
 address_book_fname = 'address_book.json'
 total_nodes = 11
+local_ip = '127.0.0.1'
 start_port = 5557
 
 class RaftNode(threading.Thread):
@@ -108,12 +109,13 @@ class RaftNode(threading.Thread):
             Inputs:
                 id_num: returns the most recent entry with this id_num. 
         '''
-        with self.client_lock:
-            if (id_num is None):
+        if (id_num is None):
+            with self.client_lock:
                 return self.log[self.commit_index]['entry']
-            elif (id_num in self.log_hash):
+        elif (id_num in self.log_hash):
+            with self.client_lock:
                 return self.log_hash[id_num]
-            return None
+        return None
 
     def check_role(self):
         ''' 
@@ -569,23 +571,24 @@ class RaftNode(threading.Thread):
                     will append the entry to the index specified.
         '''
 
+    
+        # If prev_term was specified, might have to cut the log short
+        if (prev_index is None):
+            prev_index = len(self.log) - 1
+        else:
+            self.log = self.log[:prev_index+1]
+        
+        # Add this to the log
+        prev_term = self.log[-1]['term']
         with self.client_lock:
-            # If prev_term was specified, might have to cut the log short
-            if (prev_index is None):
-                prev_index = len(self.log) - 1
-            else:
-                self.log = self.log[:prev_index+1]
-            
-            # Add this to the log
-            prev_term = self.log[-1]['term']
             self.log.append(entry)
             self.log_hash[entry['id']] = entry
 
-            # Maybe commit
-            if (commit):
-                self._commit_entry(prev_index, entry['term'])
+        # Maybe commit
+        if (commit):
+            self._commit_entry(prev_index, entry['term'])
 
-            return prev_index, prev_term
+        return prev_index, prev_term
 
     def _commit_entry(self, index, term):
         '''
@@ -600,7 +603,8 @@ class RaftNode(threading.Thread):
         '''
         self.last_applied_index = index
         self.last_applied_term = term
-        self.commit_index = index
+        with self.client_lock:
+            self.commit_index = index
 
     def _broadcast_append_entries(self, entry):
         '''
@@ -756,14 +760,14 @@ def test_failures():
             A leader should emerge after the crash. 
     '''
     # Create the address book with x number of nodes
-    d = {'leader':{'ip': '127.0.0.1',
+    d = {'leader':{'ip': local_ip,
             'port': '5553'}}
 
     node_num = 1
     for p in range(start_port, start_port+total_nodes):
         name = 'node' + str(node_num)
         d[str(name)] = { 
-            'ip': '127.0.0.1',
+            'ip': local_ip,
             'port': str(p)
         }
         node_num = node_num + 1
