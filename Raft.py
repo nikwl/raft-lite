@@ -51,6 +51,7 @@ class RaftNode(threading.Thread):
         self.current_term = 1                                               # Your current election term.
         self.voted_for = None                                               # Who have you voted in this term. None means you haven't voted for anyone. 
         self.log = [{'term': 1, 'entry': 'Init Entry', 'id': -1}]           # Your log. Log entries are a dict with the following fields: term, entry, id.
+        self.log_hash = {}
     
         # Volatile state variables
         self.commit_index = 0                                               # Index of the highest known committed entry in the system.
@@ -107,12 +108,12 @@ class RaftNode(threading.Thread):
             Inputs:
                 id_num: returns the most recent entry with this id_num. 
         '''
-        if (id_num is None):
-            return self.log[self.commit_index]['entry']
-        entry_list = [e for e in self.log[:self.commit_index + 1] if e['id'] == id_num]
-        if entry_list:
-            return entry_list[-1]['entry']
-        return None
+        with self.client_lock:
+            if (id_num is None):
+                return self.log[self.commit_index]['entry']
+            elif (id_num in self.log_hash):
+                return self.log_hash[id_num]
+            return None
 
     def check_role(self):
         ''' 
@@ -568,21 +569,23 @@ class RaftNode(threading.Thread):
                     will append the entry to the index specified.
         '''
 
-        # If prev_term was specified, might have to cut the log short
-        if (prev_index is None):
-            prev_index = len(self.log) - 1
-        else:
-            self.log = self.log[:prev_index+1]
-        
-        # Add this to the log
-        prev_term = self.log[-1]['term']
-        self.log.append(entry)
+        with self.client_lock:
+            # If prev_term was specified, might have to cut the log short
+            if (prev_index is None):
+                prev_index = len(self.log) - 1
+            else:
+                self.log = self.log[:prev_index+1]
+            
+            # Add this to the log
+            prev_term = self.log[-1]['term']
+            self.log.append(entry)
+            self.log_hash[entry['id']] = entry
 
-        # Maybe commit
-        if (commit):
-            self._commit_entry(prev_index, entry['term'])
+            # Maybe commit
+            if (commit):
+                self._commit_entry(prev_index, entry['term'])
 
-        return prev_index, prev_term
+            return prev_index, prev_term
 
     def _commit_entry(self, index, term):
         '''
