@@ -1,9 +1,9 @@
 import zmq
 import multiprocessing
-import Queue
+from Queue import Empty
 import time
 
-from MessageProtocol import MessageType
+from .MessageProtocol import MessageType
 
 class Talker(multiprocessing.Process):
 	def __init__(self, identity):
@@ -46,7 +46,7 @@ class Talker(multiprocessing.Process):
 		while not self._stop_event.is_set():
 			try:
 				pub_socket.send_json(self.messages.get_nowait())
-			except Queue.Empty:
+			except Empty:
 				try:
 					time.sleep(self.operation_backoff)
 				except KeyboardInterrupt:
@@ -115,7 +115,6 @@ class Listener(multiprocessing.Process):
 	def get_message(self):
 		# If there's nothing in the queue Queue.Empty will be thrown
 		try:
-			msg = self.messages.get_nowait()
-		except Queue.Empty:
+			return self.messages.get_nowait()
+		except Empty:
 			return None
-		return msg

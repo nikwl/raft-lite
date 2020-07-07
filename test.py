@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 import time
 
-from Raft.Raft import RaftNode
+from raft import RaftNode
 
 # Create the intercommunication json 
-comm_dict = {"node0": {"ip": "192.168.0.15", "port": "5567"}, 
-  "node1": {"ip": "192.168.0.15", "port": "5566"}, 
-  "node2": {"ip": "192.168.0.15", "port": "5565"}}
+comm_dict = {"node0": {"ip": "192.168.1.6", "port": "5567"}, 
+  "node1": {"ip": "192.168.1.6", "port": "5566"}, 
+  "node2": {"ip": "192.168.1.6", "port": "5565"}}
 
 # Start a few nodes
 nodes = [RaftNode(comm_dict, 'node0'),

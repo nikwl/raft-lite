@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 
-import copy
 import time
 import json
 import random
 import threading
-from collections import deque 
+from Queue import Queue, Empty
 
-from Interface import Listener, Talker
-from MessageProtocol import MessageType, MessageDirection, RequestVotesResults, AppendEntriesResults, RequestVotesMessage, AppendEntriesMessage, parse_json_message
+from .Interface import Listener, Talker
+from .MessageProtocol import MessageType, MessageDirection, RequestVotesResults, AppendEntriesResults, RequestVotesMessage, AppendEntriesMessage, parse_json_message
 
 # Adjust these to test
 address_book_fname = 'address_book.json'
@@ -26,7 +25,7 @@ class RaftNode(threading.Thread):
         self.verbose = verbose
 
         # Where incoming client requests go
-        self.client_queue = deque()
+        self.client_queue = Queue()
         self.client_lock = threading.Lock()
 
         # List of known nodes and their communication information
@@ -79,33 +78,30 @@ class RaftNode(threading.Thread):
         self.listener.stop()
         self._terminate = True
 
-    def client_request(self, value, id_num=None):
+    def client_request(self, value, id_num=-1):
         '''
             client_request: Public function to enqueue a value. If the node
-                is not the leader, this request will be forewarded to the leader
-                before being appended. If the system is in a transitionary state, 
-                the request may not be appended at all, so this should be retried.
-                If no id_num is specified, the id is set to -1.
+                is not the leader, this request will be forewarded to the 
+                leader before being appended. If the system is in a transition
+                state, the request may not be appended at all, so this should 
+                be retried. If no id_num is specified, the id is set to -1.
             Inputs:
                 value: any singleton data type.
-                id_num: an identifying number. Can be used to query this log entry. 
+                id_num: anything that makes a valid dictionary key.
         '''
-        if (id_num is None):
-            id_num = -1
-        with self.client_lock:
-            # Create and enqueue the entry
-            entry = {
-                'term': self.current_term,
-                'entry': value,
-                'id': id_num
-            }
-            self.client_queue.append(entry)
+
+        entry = {
+            'term': self.current_term,
+            'entry': value,
+            'id': id_num
+        }
+        self.client_queue.put(entry)
 
     def check_committed_entry(self, id_num=None):
         ''' 
-            check_committed_entry: Public function to check the last entry committed.
-                Optionally specify an id_num to search for. If specified, will return 
-                the most recent entry with this id_num. 
+            check_committed_entry: Public function to check the last entry 
+                committed. Optionally specify an id_num to search for. If 
+                specified, will return the most recent entry with this id_num. 
             Inputs:
                 id_num: returns the most recent entry with this id_num. 
         '''
@@ -122,13 +118,12 @@ class RaftNode(threading.Thread):
             check_role: Public function to check the role of a given node.
         '''
         with self.client_lock:
-            role = copy.deepcopy(self.current_role)
-        return role
+            return self.current_role
 
     def pause(self):
         '''
-            pause: Allows the user to pause a node. In this state nodes are "removed" 
-                from the system until un_pause is called. 
+            pause: Allows the user to pause a node. In this state nodes are 
+                "removed" from the system until un_pause is called. 
         '''
         self._set_current_role('none')
         if (self.verbose):
@@ -136,8 +131,8 @@ class RaftNode(threading.Thread):
         
     def un_pause(self):
         '''
-            un_pause: Allows the user to unpause a node. If the node was not already 
-                paused, does nothing.
+            un_pause: Allows the user to unpause a node. If the node was not 
+                already paused, does nothing.
         '''
         if (self.check_role() == 'none'):
             self._set_current_role('follower')
@@ -170,12 +165,13 @@ class RaftNode(threading.Thread):
 
     def _follower(self):
         ''' 
-            _follower: Nodes will start here if they have been newly added to the network. The responsibilities
-                of the follower nodes are as follows:
-                    - Respond to election requests with a vote if the candidate is more up-to-date than they are. 
+            _follower: Nodes will start here if they have been newly added to 
+                the network. The responsibilities of the follower nodes are:
+                    - Respond to election requests with a vote if the candidate 
+                        is more up-to-date than they are. 
                     - Replicate entries sent by the leader. 
                     - Commit entries committed by the leader. 
-                    - Promote self to candidate if the leader appears to have crashed. 
+                    - Promote self to candidate if the leader has crashed. 
         ''' 
 
         # This will be when you've seen the most recent heartbeat
@@ -249,15 +245,19 @@ class RaftNode(threading.Thread):
 
     def _candidate(self):
         ''' 
-            _candidate: Nodes will start here if they have not heard the leader for a period of time. The 
-                responsibilities of the candidate nodes are as follows:
+            _candidate: Nodes will start here if they have not heard the leader 
+                for a period of time. The responsibilities of the candidate 
+                nodes are:
                     - Call for a new election and await the results: 
-                        + If you recieve more than half of the votes in the system, promote yourself. 
-                        + If you see someone else starting an election for a term higher than your own, 
-                            vote for them, update yourself, and then demote yourself. 
-                        + If you see a heartbeat for a term higher than or equal to your own, update 
-                            yourself, and then demote yourself. 
-                        + If you have not won after the election timeout, restart the election. 
+                    - If you recieve more than half of the votes in the system, 
+                        promote yourself. 
+                    - If you see someone else starting an election for a term 
+                        higher than your own, vote for them, update yourself, 
+                        and then demote yourself. 
+                    - If you see a heartbeat for a term higher than or equal to 
+                        your own, update yourself, and then demote yourself. 
+                    - If you have not won after the election timeout, restart 
+                        the election. 
         ''' 
 
         if(self.verbose):
@@ -330,18 +330,22 @@ class RaftNode(threading.Thread):
 
     def _leader(self):
         ''' 
-            _leader: Nodes will start here if they have won an election and promoted themselves. The 
-                responsibilities of the leader nodes are as follows:
+            _leader: Nodes will start here if they have won an election and 
+                promoted themselves. The responsibilities of the leader nodes 
+                are:
                     - Send a periodic heartbeat. 
-                    - Keep track of who is active in the system and their status. This is done using 
-                        self.next_index and self.match_index.
-                    - Accept client requests and replicate them on the system. When a new request is 
-                        made, send an append entries to all up-to-date nodes and away a response. When 
-                        more than half of the nodes respond, commit that entry. 
-                    - Catch up nodes that are behind by resending append entries after a small 
-                        amount of time. 
-                    - If there's a vote going on with a term term higher than your own, vote for them, 
-                        update yourself, and then demote yourself. 
+                    - Keep track of who is active in the system and their 
+                        status. This is done using self.next_index and 
+                        self.match_index.
+                    - Accept client requests and replicate them on the system. 
+                        When a new request is made, send an append entries to 
+                        all up-to-date nodes and away a response. When  more 
+                        than half of the nodes respond, commit that entry. 
+                    - Catch up nodes that are behind by resending append 
+                        entries after a short amount of time. 
+                    - If there's a vote going on with a term term higher than 
+                        your own, vote for them, update yourself, and then 
+                        demote yourself. 
         ''' 
         
         if(self.verbose):
@@ -481,12 +485,10 @@ class RaftNode(threading.Thread):
         '''
             _get_node_index: Pops the most recent client request. 
         '''
-        with self.client_lock:
-            if self.client_queue:
-                value = self.client_queue.popleft()
-            else:
-                value = None
-        return value
+        try:
+            return self.client_queue.get(block=False)
+        except Empty:
+            return None
     
     def _set_current_role(self, role):
         '''
@@ -593,8 +595,8 @@ class RaftNode(threading.Thread):
     def _commit_entry(self, index, term):
         '''
             _commit_entry: Update internal varables to reflect a commit at the 
-                given index and term. Specifically the below variables should be
-                updated whenever a commmit is made. 
+                given index and term. Specifically the below variables should 
+                be updated whenever a commmit is made. 
             Inputs:
                 index: (int) 
                     Index to commit.
@@ -603,13 +605,16 @@ class RaftNode(threading.Thread):
         '''
         self.last_applied_index = index
         self.last_applied_term = term
+
+        # Commit index can be used in parallel by the client to query a log index
         with self.client_lock:
             self.commit_index = index
 
     def _broadcast_append_entries(self, entry):
         '''
             _broadcast_append_entries: Should be called only by the leader. 
-                Sends an append entries message to all nodes for the given entry.
+                Sends an append entries message to all nodes for the given 
+                entry.
             Inputs:
                 entry: (dict with the attributes 'term' and 'entry') 
                     Entry to append to all nodes.    
