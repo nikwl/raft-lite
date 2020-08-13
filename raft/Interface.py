@@ -1,7 +1,7 @@
 import zmq
-import multiprocessing
-from Queue import Empty
 import time
+import multiprocessing
+from queue import Empty
 
 from .MessageProtocol import MessageType
 
@@ -89,7 +89,7 @@ class Listener(multiprocessing.Process):
 		# All of the zmq initialization has to be in the same function for some reason
 		context = zmq.Context()
 		sub_sock = context.socket(zmq.SUB)
-		sub_sock.setsockopt(zmq.SUBSCRIBE, '')
+		sub_sock.setsockopt(zmq.SUBSCRIBE, b'')
 		for a in self.address_list:
 			sub_sock.connect("tcp://%s" % a)
 

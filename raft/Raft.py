@@ -1,17 +1,24 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
+from __future__ import division
+
+from builtins import str
+from builtins import range
+from past.utils import old_div
+
 import time
 import json
 import random
 import threading
-from Queue import Queue, Empty
+from queue import Queue, Empty
 
 from .Interface import Listener, Talker
 from .MessageProtocol import MessageType, MessageDirection, RequestVotesResults, AppendEntriesResults, RequestVotesMessage, AppendEntriesMessage, parse_json_message
 
 # Adjust these to test
 address_book_fname = 'address_book.json'
-total_nodes = 11
+total_nodes = 1
 local_ip = '127.0.0.1'
 start_port = 5557
 
@@ -296,7 +303,7 @@ class RaftNode(threading.Thread):
                         #print(self.name + ": total votes " + str(total_votes))
                             
                         # If you have a majority, promote yourself
-                        if ((votes_for_me > int(self.current_num_nodes / 2)) or (self.current_num_nodes == 1)):
+                        if ((votes_for_me > int(old_div(self.current_num_nodes, 2))) or (self.current_num_nodes == 1)):
                             self._set_current_role('leader')
                             return
 
@@ -428,7 +435,7 @@ class RaftNode(threading.Thread):
                             for index in log_lengths:
                                 # Count how many other nodes this index is replicated on
                                 replicated_on = sum([1 if index <= i else 0 for i in log_lengths])
-                                if (replicated_on >= (int(self.current_num_nodes / 2) + 1)):
+                                if (replicated_on >= (int(old_div(self.current_num_nodes, 2)) + 1)):
                                     max_committable_index = index
 
                             # If there's a new committable index, then send the commit
@@ -799,7 +806,7 @@ def test_failures():
     # Pause about half of them, including the leader
     l = [n for n in s if (n.check_role() == 'leader')][0]
     l.pause()
-    num_to_kill = int(total_nodes / 2) - 1
+    num_to_kill = int(old_div(total_nodes, 2)) - 1
     for n in s:
         num_to_kill = num_to_kill - 1
         if num_to_kill == 0:

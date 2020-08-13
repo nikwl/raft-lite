@@ -1,6 +1,8 @@
+from builtins import object
+
 import time
 
-class MessageType():
+class MessageType(object):
 	RequestVotes = 0
 	RequestVoteResponse = 1
 	Heartbeat = 2
@@ -9,122 +11,122 @@ class MessageType():
 	Committal = 5
 	ClientRequest = 6
 
-class MessageDirection():
+class MessageDirection(object):
 	Request = 0
 	Response = 1	
 
-class RequestVotesResults(): 
+class RequestVotesResults(object): 
 	def __init__(self, term=None, vote_granted=None, message=None):
 		if (message is not None):
 			self.un_jsonify(message)
 		else:
-			self.term = term
-			self.vote_granted = vote_granted
+			self._term = term
+			self._vote_granted = vote_granted
 
 	@property
 	def term(self):
-		return self.term
+		return self._term
 
 	@property
 	def vote_granted(self):
-		return self.vote_granted
+		return self._vote_granted
 
 	def un_jsonify(self, message):
-		self.term = 			message['term']     
-		self.vote_granted =	message['vote_granted']     
+		self._term = 			message['term']     
+		self._vote_granted =	message['vote_granted']     
 
 	def jsonify(self):
 		return {
-			'term':      		self.term,
-			'vote_granted': 	self.vote_granted
+			'term':      		self._term,
+			'vote_granted': 	self._vote_granted
 		}
 
-class AppendEntriesResults():
+class AppendEntriesResults(object):
 	def __init__(self, term=None, success=None, message=None):
 		if (message is not None):
 			self.un_jsonify(message)
 		else:
-			self.term = term
+			self._term = term
 			self._success = success
 
 	@property
 	def term(self):
-		return self.term
+		return self._term
 
 	@property
 	def success(self):
 		return self._success
 
 	def un_jsonify(self, message):
-		self.term = 	message['term']     
+		self._term = 	message['term']     
 		self._success =	message['success']     
 
 	def jsonify(self):
 		return {
-			'term':      	self.term,
+			'term':      	self._term,
 			'success':      self._success
 		}
 
-class BaseMessage():
+class BaseMessage(object):
 
 	def __init__(self, type_, term, sender, receiver, direction, results):
-		self.timestamp = int(time.time())
-		self.type_ = type_
-		self.term = term				
-		self.sender = sender
-		self.receiver = receiver
-		self.direction = direction
-		self.results = results
+		self._timestamp = int(time.time())
+		self._type = type_
+		self._term = term				
+		self._sender = sender
+		self._receiver = receiver
+		self._direction = direction
+		self._results = results
 
 	@property
 	def timestamp(self):
-		return self.timestamp
+		return self._timestamp
 
 	@property
 	def type(self):
-		return self.type_
+		return self._type
 
 	@property
 	def term(self):
-		return self.term
+		return self._term
 
 	@property
 	def sender(self):
-		return self.sender
+		return self._sender
 
 	@property
 	def receiver(self):
-		return self.receiver
+		return self._receiver
 
 	@property
 	def direction(self):
-		return self.direction
+		return self._direction
 
 	@property
 	def results(self):
-		return self.results
+		return self._results
 
 	def un_jsonify(self, message):
-		self.type_ = 			message['type']     
-		self.term = 			message['term']     
-		self.timestamp = 		message['timestamp']
-		self.sender = 			message['sender']
-		self.receiver = 		message['receiver'] 
-		self.direction = 		message['direction']
-		if (self.type_ == MessageType.RequestVotes):
-			self.results = RequestVotesResults(message=message['results'])
+		self._type = 			message['type']     
+		self._term = 			message['term']     
+		self._timestamp = 		message['timestamp']
+		self._sender = 			message['sender']
+		self._receiver = 		message['receiver'] 
+		self._direction = 		message['direction']
+		if (self._type == MessageType.RequestVotes):
+			self._results = RequestVotesResults(message=message['results'])
 		else:
-			self.results = AppendEntriesResults(message=message['results'])
+			self._results = AppendEntriesResults(message=message['results'])
 
 	def jsonify(self):
 		return {
-			'type':      	self.type_,
-			'term':      	self.term,
-			'timestamp': 	self.timestamp,
-			'sender':    	self.sender,
-			'receiver':  	self.receiver,
-			'direction': 	self.direction,
-			'results': 		self.results.jsonify()
+			'type':      	self._type,
+			'term':      	self._term,
+			'timestamp': 	self._timestamp,
+			'sender':    	self._sender,
+			'receiver':  	self._receiver,
+			'direction': 	self._direction,
+			'results': 		self._results.jsonify()
 		}
 
 class RequestVotesMessage(BaseMessage):
@@ -135,34 +137,34 @@ class RequestVotesMessage(BaseMessage):
 			if (results is None):
 				results = RequestVotesResults()
 			BaseMessage.__init__(self, type_, term, sender, receiver, direction, results)
-			self.candidate_id = candidate_id
-			self.last_log_index = last_log_index
-			self.last_log_term = last_log_term
+			self._candidate_id = candidate_id
+			self._last_log_index = last_log_index
+			self._last_log_term = last_log_term
 		
 	@property
 	def candidate_id(self):
-		return self.candidate_id
+		return self._candidate_id
 
 	@property
 	def last_log_index(self):
-		return self.last_log_index
+		return self._last_log_index
 
 	@property
 	def last_log_term(self):
-		return self.last_log_term
+		return self._last_log_term
 
 	def un_jsonify(self, message):
 		BaseMessage.un_jsonify(self, message)
-		self.candidate_id = 	message['candidate_id']
-		self.last_log_index = 	message['last_log_index']
-		self.last_log_term = 	message['last_log_term']
+		self._candidate_id = 	message['candidate_id']
+		self._last_log_index = 	message['last_log_index']
+		self._last_log_term = 	message['last_log_term']
 
 	def jsonify(self):
 		message = BaseMessage.jsonify(self)
 		message.update({
-			'candidate_id': 	self.candidate_id,
-			'last_log_index': 	self.last_log_index,
-			'last_log_term': 	self.last_log_term
+			'candidate_id': 	self._candidate_id,
+			'last_log_index': 	self._last_log_index,
+			'last_log_term': 	self._last_log_term
 		})
 		return message
 
@@ -174,48 +176,48 @@ class AppendEntriesMessage(BaseMessage):
 			if (results is None):
 				results = AppendEntriesResults()
 			BaseMessage.__init__(self, type_, term, sender, receiver, direction, results)
-			self.leader_id = leader_id
-			self.prev_log_index = prev_log_index
-			self.prev_log_term = prev_log_term
-			self.entries = entries
-			self.leader_commit = leader_commit
+			self._leader_id = leader_id
+			self._prev_log_index = prev_log_index
+			self._prev_log_term = prev_log_term
+			self._entries = entries
+			self._leader_commit = leader_commit
 
 	@property
 	def leader_id(self):
-		return self.leader_id
+		return self._leader_id
 
 	@property
 	def prev_log_index(self):
-		return self.prev_log_index
+		return self._prev_log_index
 
 	@property
 	def prev_log_term(self):
-		return self.prev_log_term
+		return self._prev_log_term
 
 	@property
 	def entries(self):
-		return self.entries
+		return self._entries
 
 	@property
 	def leader_commit(self):
-		return self.leader_commit
+		return self._leader_commit
 
 	def un_jsonify(self, message):
 		BaseMessage.un_jsonify(self, message)
-		self.leader_id = 		message['leader_id']
-		self.prev_log_index = 	message['prev_log_index']
-		self.prev_log_term = 	message['prev_log_term']
-		self.entries = 			message['entries']
-		self.leader_commit = 	message['leader_commit']
+		self._leader_id = 		message['leader_id']
+		self._prev_log_index = 	message['prev_log_index']
+		self._prev_log_term = 	message['prev_log_term']
+		self._entries = 			message['entries']
+		self._leader_commit = 	message['leader_commit']
 
 	def jsonify(self):
 		message = BaseMessage.jsonify(self)
 		message.update({
-			'leader_id': 		self.leader_id,
-			'prev_log_index': 	self.prev_log_index,
-			'prev_log_term': 	self.prev_log_term,
-			'entries': 			self.entries,
-			'leader_commit': 	self.leader_commit
+			'leader_id': 		self._leader_id,
+			'prev_log_index': 	self._prev_log_index,
+			'prev_log_term': 	self._prev_log_term,
+			'entries': 			self._entries,
+			'leader_commit': 	self._leader_commit
 		})
 		return message
 
