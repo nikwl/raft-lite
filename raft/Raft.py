@@ -11,14 +11,16 @@ import time
 import json
 import random
 import threading
+import asyncio
 from queue import Queue, Empty
 
-from .Interface import Listener, Talker
+#from .Interface import Listener, Talker
+from .AsyncInterface import Listener, Talker
 from .MessageProtocol import MessageType, MessageDirection, RequestVotesResults, AppendEntriesResults, RequestVotesMessage, AppendEntriesMessage, parse_json_message
 
 # Adjust these to test
 address_book_fname = 'address_book.json'
-total_nodes = 1
+total_nodes = 11
 local_ip = '127.0.0.1'
 start_port = 5557
 
@@ -76,9 +78,9 @@ class RaftNode(threading.Thread):
             'my_name':    name
         }
         self.listener = Listener(port_list=self.all_ids, identity=identity)
-        self.listener.start()
+        #self.listener.start()
         self.talker = Talker(identity=identity)
-        self.talker.start()
+        #self.talker.start()
 
     def stop(self):
         self.talker.stop()
@@ -150,27 +152,35 @@ class RaftNode(threading.Thread):
                 print(self.name + ': node was not paused, doing nothing')
 
     def run(self):
+        event_loop = asyncio.new_event_loop()
+        event_loop.run_until_complete(asyncio.wait([
+            self.talker.run(),
+            self.listener.run(),
+            self.loop()
+        ]))
+
+    async def loop(self):
         '''
-            run: Called when the node starts. Facilitates state transitions. 
+            start: Called when the node starts. Facilitates state transitions. 
         '''
         # Wait for the interface to be ready
-        time.sleep(self.listener.initial_backoff)
+        await asyncio.sleep(self.listener.initial_backoff)
 
         # Your role determines your action. Every time a state chance occurs, this loop will facilitate a transition to the next state. 
         try:
             while not self._terminate:
                 if self.check_role() == 'leader':
-                    self._leader()
+                    await self._leader()
                 elif self.check_role() == 'follower':
-                    self._follower()
+                    await self._follower()
                 elif self.check_role() == 'candidate':
-                    self._candidate()
+                    await self._candidate()
                 else:
-                    time.sleep(1)
+                    await asyncio.sleep(1)
         except KeyboardInterrupt:
             self.stop()
 
-    def _follower(self):
+    async def _follower(self):
         ''' 
             _follower: Nodes will start here if they have been newly added to 
                 the network. The responsibilities of the follower nodes are:
@@ -184,8 +194,11 @@ class RaftNode(threading.Thread):
         # This will be when you've seen the most recent heartbeat
         most_recent_heartbeat = time.time()
 
+        # Yield to the interface
+        await asyncio.sleep(0)
+
         while ((not self._terminate) and (self.check_role() == 'follower')):
-            incoming_message = self._get_message()
+            incoming_message = await self._get_message()
             if (incoming_message is not None):
 
                 # Followers only handle requests
@@ -200,9 +213,10 @@ class RaftNode(threading.Thread):
                             
                         # If you haven't already voted and you're less up to date than the candidate, send your vote
                         if ((self.voted_for is None) and (incoming_message.last_log_index >= self.last_applied_index) and (incoming_message.last_log_term >= self.last_applied_term)):
-                            self._send_vote(incoming_message.sender)
+                            message = self._send_vote(incoming_message.sender)
                         else: 
-                            self._send_vote(incoming_message.sender, False)
+                            message = self._send_vote(incoming_message.sender, False)
+                        await self._send_message(message)
 
                         # If there's currently a candidate running, then you shouldn't promote yourself
                         most_recent_heartbeat = time.time()
@@ -218,18 +232,19 @@ class RaftNode(threading.Thread):
                         if (self.leader_id):
                             client_request = self._get_client_request()
                             if (client_request is not None):
-                                self._send_client_request(incoming_message.leader_id, client_request)
+                                message = self._send_client_request(incoming_message.leader_id, client_request)
+                                await self._send_message(message)
                         
                     # Incoming message is some data to append
                     elif (incoming_message.type == MessageType.AppendEntries):
                         
                         # Reply false if message term is less than current_term, this is an invalid entry
                         if (incoming_message.term < self.current_term):
-                            self._send_acknowledge(incoming_message.leader_id, False)
+                            message = self._send_acknowledge(incoming_message.leader_id, False)
 
                         # Reply false if log doesnt contain an entry at prev_log_index whose term matches prev_log_term
                         elif (not self._verify_entry(incoming_message.prev_log_index, incoming_message.prev_log_term)):
-                            self._send_acknowledge(incoming_message.leader_id, False)
+                            message = self._send_acknowledge(incoming_message.leader_id, False)
 
                         # Else if the previous index and term match, append the entry and reply true
                         else:
@@ -237,7 +252,8 @@ class RaftNode(threading.Thread):
                                 self._append_entry(incoming_message.entries, commit=True, prev_index=incoming_message.prev_log_index)
                             else:
                                 self._append_entry(incoming_message.entries, commit=False, prev_index=incoming_message.prev_log_index)
-                            self._send_acknowledge(incoming_message.leader_id, True)
+                            message = self._send_acknowledge(incoming_message.leader_id, True)
+                        await self._send_message(message)
                     
                     # Incoming message is a commit message
                     elif (incoming_message.type == MessageType.Committal):
@@ -248,9 +264,12 @@ class RaftNode(threading.Thread):
                 self._set_current_role('candidate')
                 return
 
+            # Yield to the interface
+            await asyncio.sleep(0)
+
         return
 
-    def _candidate(self):
+    async def _candidate(self):
         ''' 
             _candidate: Nodes will start here if they have not heard the leader 
                 for a period of time. The responsibilities of the candidate 
@@ -274,10 +293,12 @@ class RaftNode(threading.Thread):
         self._increment_term()
 
         # Request for nodes to vote for you
-        self._send_request_vote()
+        message = self._send_request_vote()
+        await self._send_message(message)
 
         # Vote for yorself
-        self._send_vote(self.my_id, True)
+        message = self._send_vote(self.my_id, True)
+        await self._send_message(message)
         
         # Keep track of votes for and against you
         votes_for_me = 0
@@ -287,7 +308,7 @@ class RaftNode(threading.Thread):
         time_election_going = time.time()
 
         while ((not self._terminate) and (self.check_role() == 'candidate')):
-            incoming_message = self._get_message()
+            incoming_message = await self._get_message()
             if (incoming_message is not None):
 
                 # Handle responses to your election
@@ -314,7 +335,8 @@ class RaftNode(threading.Thread):
                     if (incoming_message.type == MessageType.RequestVotes):
                         if (incoming_message.term > self.current_term):
                             self._increment_term(incoming_message.term)
-                            self._send_vote(incoming_message.sender)
+                            message = self._send_vote(incoming_message.sender)
+                            await self._send_message(message)
                             self._set_current_role('follower')
                             return
 
@@ -332,10 +354,13 @@ class RaftNode(threading.Thread):
                     print(self.name + ': election timed out')
                 self._set_current_role('candidate')
                 return
+
+            # Yield to the interface
+            await asyncio.sleep(0)
         
         return
 
-    def _leader(self):
+    async def _leader(self):
         ''' 
             _leader: Nodes will start here if they have won an election and 
                 promoted themselves. The responsibilities of the leader nodes 
@@ -359,7 +384,8 @@ class RaftNode(threading.Thread):
             print(self.name + ': became leader')
 
         # First things first, send a heartbeat
-        self._send_heartbeat()
+        message = self._send_heartbeat()
+        await self._send_message(message)
 
         # Keep track of when you've sent the last heartbeat
         most_recent_heartbeat = time.time()
@@ -376,13 +402,14 @@ class RaftNode(threading.Thread):
 
         # Broadcast an entry to get everyone on the same page
         entry = {'term': self.current_term, 'entry': 'Leader Entry', 'id': -1}
-        self._broadcast_append_entries(entry)
+        await self._broadcast_append_entries(entry)
 
         while ((not self._terminate) and (self.check_role() == 'leader')):
 
             # First, send a heartbeat
             if ((time.time() - most_recent_heartbeat) > self.heartbeat_frequency):
-                self._send_heartbeat()
+                message = self._send_heartbeat()
+                await self._send_message(message)
                 most_recent_heartbeat = time.time()
                 if (self.verbose):
                     pass
@@ -392,11 +419,12 @@ class RaftNode(threading.Thread):
             # If you haven't heard from a node in a while and it's not up to date, resend the most recent append entries
             for node, index in enumerate(self.next_index):
                 if ((index is not None) and ((time.time() - self.heard_from[node]) > self.resend_time)):
-                    self._send_append_entries(index - 1, self.log[index - 1]['term'], self.log[index], self.all_ids[node])
+                    message = self._send_append_entries(index - 1, self.log[index - 1]['term'], self.log[index], self.all_ids[node])
+                    await self._send_message(message)
                     self.heard_from[node] = time.time()
 
             # Watch for messages
-            incoming_message = self._get_message()
+            incoming_message = await self._get_message()
             if (incoming_message is not None):
 
                 # Handle incoming responses 
@@ -423,7 +451,8 @@ class RaftNode(threading.Thread):
                                 self.next_index[sender_index] = None
                             else:
                                 next_index = self.next_index[sender_index]
-                                self._send_append_entries(next_index - 1, self.log[next_index - 1]['term'], self.log[next_index], incoming_message.sender)
+                                message = self._send_append_entries(next_index - 1, self.log[next_index - 1]['term'], self.log[next_index], incoming_message.sender)
+                                await self._send_message(message)
                             
                             if (self.verbose):
                                 print(self.name + ": updated standing is " + str(self.match_index) + " my index: " + str(self._log_max_index()))
@@ -440,12 +469,12 @@ class RaftNode(threading.Thread):
 
                             # If there's a new committable index, then send the commit
                             if (max_committable_index > self.commit_index):
-                                    self._broadcast_commmit_entries(max_committable_index)
+                                await self._broadcast_commmit_entries(max_committable_index)
 
                     # If its a client then it's a new request
                     elif (incoming_message.type == MessageType.ClientRequest):
                         client_request = incoming_message.entries
-                        self._broadcast_append_entries(client_request)
+                        await self._broadcast_append_entries(client_request)
 
                 # Handle incoming requests
                 elif (incoming_message.direction == MessageDirection.Request):
@@ -454,7 +483,8 @@ class RaftNode(threading.Thread):
                     if (incoming_message.type == MessageType.RequestVotes):
                         if (incoming_message.term > self.current_term):
                             self._increment_term(incoming_message.term)
-                            self._send_vote(incoming_message.sender)
+                            message = self._send_vote(incoming_message.sender)
+                            await self._send_message(message)
                             self._set_current_role('follower')
 
                             if(self.verbose):
@@ -464,24 +494,30 @@ class RaftNode(threading.Thread):
             # Get any pending client requests
             client_request = self._get_client_request()
             if (client_request is not None):
-                self._broadcast_append_entries(client_request)
+                await self._broadcast_append_entries(client_request)
+
+            # Yield to the interface
+            await asyncio.sleep(0)
 
         return
 
-    def _send_message(self, message):
+    async def _send_message(self, message):
         '''
             _send_message: A wrapper to send a message.
             Inputs:
                 message: (RequestVotesMessage or AppendEntriesMessage)
         '''
-        self.talker.send_message(message.jsonify())
+        message = message.jsonify()
+        await self.talker.send_message(message)
+        await asyncio.sleep(0)
 
-    def _get_message(self):
+    async def _get_message(self):
         '''
             _get_message: A wrapper to get a message. If there are no pending 
                 messages returns None. 
         '''
-        return parse_json_message(self.listener.get_message())
+        message = await self.listener.get_message()
+        return parse_json_message(message)
 
     def _load_config(self, config, name):
         with open(config, 'r') as infile:
@@ -617,7 +653,7 @@ class RaftNode(threading.Thread):
         with self.client_lock:
             self.commit_index = index
 
-    def _broadcast_append_entries(self, entry):
+    async def _broadcast_append_entries(self, entry):
         '''
             _broadcast_append_entries: Should be called only by the leader. 
                 Sends an append entries message to all nodes for the given 
@@ -633,14 +669,15 @@ class RaftNode(threading.Thread):
         for node, index in enumerate(self.next_index):
             # Only send out append entries to nodes that are up-to-date. Also they will now be out of date so update next. 
             if (index is None):
-                self._send_append_entries(prev_index, prev_term, entry, self.all_ids[node])
+                message = self._send_append_entries(prev_index, prev_term, entry, self.all_ids[node])
+                await self._send_message(message)
                 self.next_index[node] = self._log_max_index()
 
         # Update your own information
         self.next_index[self._get_node_index(self.my_id)] =  None
         self.match_index[self._get_node_index(self.my_id)] = self._log_max_index()
 
-    def _broadcast_commmit_entries(self, index):
+    async def _broadcast_commmit_entries(self, index):
         '''
             _broadcast_commmit_entries: Should be called only by the leader. 
                 Sends a commit message to all nodes for the given index.
@@ -654,7 +691,8 @@ class RaftNode(threading.Thread):
         # Commit everybody else
         for node, index in enumerate(self.match_index):
             if (index >= index):
-                self._send_committal(index, self.all_ids[node])
+                message = self._send_committal(index, self.all_ids[node])
+                await self._send_message(message)
 
     def _send_request_vote(self, receiver=None):
         message = RequestVotesMessage(
@@ -667,7 +705,8 @@ class RaftNode(threading.Thread):
             last_log_index = self.last_applied_index,
             last_log_term = self.last_applied_term
         )
-        self._send_message(message)
+        return message
+        #self._send_message(message)
 
     def _send_vote(self, candidate, vote_granted=True):
         message = RequestVotesMessage(
@@ -684,8 +723,9 @@ class RaftNode(threading.Thread):
                 vote_granted = vote_granted
             )
         )
-        self._send_message(message)
         self.voted_for = candidate
+        return message
+        #self._send_message(message)
 
     def _send_heartbeat(self):
         message = AppendEntriesMessage(
@@ -700,7 +740,8 @@ class RaftNode(threading.Thread):
             entries = None,
             leader_commit = self.commit_index
         )
-        self._send_message(message)
+        return message
+        #self._send_message(message)
 
     def _send_append_entries(self, index, term, entries, receiver=None):
         message = AppendEntriesMessage(
@@ -715,7 +756,8 @@ class RaftNode(threading.Thread):
             entries = entries,
             leader_commit = self.commit_index
         )
-        self._send_message(message)
+        return message
+        #self._send_message(message)
     
     def _send_committal(self, index, receiver=None):
         message = AppendEntriesMessage(
@@ -730,7 +772,8 @@ class RaftNode(threading.Thread):
             entries = None,
             leader_commit = self.commit_index
         )
-        self._send_message(message)
+        return message
+        #self._send_message(message)
 
     def _send_acknowledge(self, receiver, success, entry=None):
         message = AppendEntriesMessage(
@@ -749,7 +792,8 @@ class RaftNode(threading.Thread):
                 success = success
             ) 
         )
-        self._send_message(message)
+        return message
+        #self._send_message(message)
 
     def _send_client_request(self, receiver, entry):
         message = AppendEntriesMessage(
@@ -764,7 +808,8 @@ class RaftNode(threading.Thread):
             entries = entry,
             leader_commit = self.commit_index
         )
-        self._send_message(message)
+        return message
+        #self._send_message(message)
 
 def test_failures():
     '''
