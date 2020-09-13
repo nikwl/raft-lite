@@ -3,7 +3,7 @@ import time
 import multiprocessing
 from queue import Empty
 
-from .MessageProtocol import MessageType
+from .protocol import MessageType
 
 class Talker(multiprocessing.Process):
 	def __init__(self, identity):

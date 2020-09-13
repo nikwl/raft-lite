@@ -13,8 +13,10 @@ import random
 import threading
 from queue import Queue, Empty
 
-from .Interface import Listener, Talker
-from .MessageProtocol import MessageType, MessageDirection, RequestVotesResults, AppendEntriesResults, RequestVotesMessage, AppendEntriesMessage, parse_json_message
+from .interface import Listener, Talker
+from .protocol import MessageType, MessageDirection, RequestVotesResults, \
+    AppendEntriesResults, RequestVotesMessage, AppendEntriesMessage, \
+    parse_json_message
 
 # Adjust these to test
 address_book_fname = 'address_book.json'
@@ -49,7 +51,7 @@ class RaftNode(threading.Thread):
         self.resend_time = 2.0                                              # How often to resend an append entries if you havent heard from a node in a while. 
 
         # State variables that I've added
-        self.name = name                                                    # Your name. Used mostly for debugging.
+        self._name = name                                                   # Your name. Used mostly for debugging.
         self.current_num_nodes = len(self.all_ids)                          # Number of nodes in the system.
         self.current_role = role                                            # Your role in the system (follower, candidate, leader, pending).
         self.leader_id = None                                               # Who you think the current leader is.
@@ -71,10 +73,7 @@ class RaftNode(threading.Thread):
         self.heard_from = [0 for _ in range(self.current_num_nodes)]        # Time last heard from each node. 
 
         # Start both ends of your interface
-        identity = {
-            'my_id':      self.my_id,          
-            'my_name':    name
-        }
+        identity = {'my_id': self.my_id, 'my_name': name}
         self.listener = Listener(port_list=self.all_ids, identity=identity)
         self.listener.start()
         self.talker = Talker(identity=identity)
@@ -85,6 +84,11 @@ class RaftNode(threading.Thread):
         self.listener.stop()
         self._terminate = True
 
+    @property
+    def name(self):
+        ''' Return the name of the node. '''
+        return self._name
+        
     def client_request(self, value, id_num=-1):
         '''
             client_request: Public function to enqueue a value. If the node
@@ -94,7 +98,7 @@ class RaftNode(threading.Thread):
                 be retried. If no id_num is specified, the id is set to -1.
             Inputs:
                 value: any singleton data type.
-                id_num: anything that makes a valid dictionary key.
+                id_num: any immutable object.
         '''
 
         entry = {
@@ -115,10 +119,8 @@ class RaftNode(threading.Thread):
         if (id_num is None):
             with self.client_lock:
                 return self.log[self.commit_index]['entry']
-        elif (id_num in self.log_hash):
-            with self.client_lock:
-                return self.log_hash[id_num]
-        return None
+        with self.client_lock:
+            return self.log_hash.get(id_num, None)
 
     def check_role(self):
         ''' 
@@ -134,7 +136,7 @@ class RaftNode(threading.Thread):
         '''
         self._set_current_role('none')
         if (self.verbose):
-            print(self.name + ': pausing...')
+            print(self._name + ': pausing...')
         
     def un_pause(self):
         '''
@@ -144,10 +146,10 @@ class RaftNode(threading.Thread):
         if (self.check_role() == 'none'):
             self._set_current_role('follower')
             if (self.verbose):
-                print(self.name + ': unpausing...')
+                print(self._name + ': unpausing...')
         else:
             if (self.verbose):
-                print(self.name + ': node was not paused, doing nothing')
+                print(self._name + ': node was not paused, doing nothing')
 
     def run(self):
         '''
@@ -268,7 +270,7 @@ class RaftNode(threading.Thread):
         ''' 
 
         if(self.verbose):
-            print(self.name + ': became candidate')
+            print(self._name + ': became candidate')
 
         # If you're a candidate, then this is a new term
         self._increment_term()
@@ -299,8 +301,8 @@ class RaftNode(threading.Thread):
                             votes_for_me += 1
                         total_votes += 1
 
-                        #print(self.name + ": votes for me " + str(votes_for_me))
-                        #print(self.name + ": total votes " + str(total_votes))
+                        #print(self._name + ": votes for me " + str(votes_for_me))
+                        #print(self._name + ": total votes " + str(total_votes))
                             
                         # If you have a majority, promote yourself
                         if ((votes_for_me > int(old_div(self.current_num_nodes, 2))) or (self.current_num_nodes == 1)):
@@ -329,7 +331,7 @@ class RaftNode(threading.Thread):
             # If this election has been going for a while we're probably deadlocked, restart the election
             if ((time.time() - time_election_going) > self.election_timeout):
                 if(self.verbose):
-                    print(self.name + ': election timed out')
+                    print(self._name + ': election timed out')
                 self._set_current_role('candidate')
                 return
         
@@ -356,7 +358,7 @@ class RaftNode(threading.Thread):
         ''' 
         
         if(self.verbose):
-            print(self.name + ': became leader')
+            print(self._name + ': became leader')
 
         # First things first, send a heartbeat
         self._send_heartbeat()
@@ -386,8 +388,8 @@ class RaftNode(threading.Thread):
                 most_recent_heartbeat = time.time()
                 if (self.verbose):
                     pass
-                    #print(self.name + ': sent heartbeat')
-                    #print(self.name + ': max committed index: ' + str(self.commit_index))
+                    #print(self._name + ': sent heartbeat')
+                    #print(self._name + ': max committed index: ' + str(self.commit_index))
 
             # If you haven't heard from a node in a while and it's not up to date, resend the most recent append entries
             for node, index in enumerate(self.next_index):
@@ -426,7 +428,7 @@ class RaftNode(threading.Thread):
                                 self._send_append_entries(next_index - 1, self.log[next_index - 1]['term'], self.log[next_index], incoming_message.sender)
                             
                             if (self.verbose):
-                                print(self.name + ": updated standing is " + str(self.match_index) + " my index: " + str(self._log_max_index()))
+                                print(self._name + ": updated standing is " + str(self.match_index) + " my index: " + str(self._log_max_index()))
 
                             # Determine the 'committable' indices
                             log_lengths = [int(i) for i in self.match_index if (i is not None)]
@@ -458,7 +460,7 @@ class RaftNode(threading.Thread):
                             self._set_current_role('follower')
 
                             if(self.verbose):
-                                print(self.name + ': saw higher term, demoting')
+                                print(self._name + ': saw higher term, demoting')
                             return
             
             # Get any pending client requests
