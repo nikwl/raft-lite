@@ -1,2 +1,2 @@
-future==0.18.2
+future==1.0.0
 pyzmq==19.0.2 
